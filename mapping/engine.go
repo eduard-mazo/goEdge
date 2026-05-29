@@ -1,219 +1,134 @@
-// Package mapping converts raw Modbus bytes to Sparkplug B metric values.
+// Package mapping converts DNP3 measurements to Sparkplug B metrics.
 package mapping
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 
-	"goMqttModbus/config"
-	"goMqttModbus/sparkplug"
+	"goMqttDnp3/config"
+	"goMqttDnp3/dnp3"
+	"goMqttDnp3/sparkplug"
 )
 
-// ReadFnName maps config function strings to modbus ReadFunc names.
-var ReadFnName = map[string]struct{}{
-	"coil":             {},
-	"discrete_input":   {},
-	"input_register":   {},
-	"holding_register": {},
-}
-
-// Result holds the decoded engineering value and the Sparkplug metric.
+// Result holds the engineering-scaled value and the Sparkplug metric.
 type Result struct {
 	Value  float64
 	IsNull bool
 	Metric *sparkplug.Metric
 }
 
-// Apply decodes raw Modbus bytes according to SignalMapping and returns a Sparkplug metric.
-func Apply(sig config.SignalMapping, rawBytes []byte, ts uint64) (Result, error) {
-	reordered, err := reorder(rawBytes, sig.ByteOrder, sig.DataType)
-	if err != nil {
-		return Result{}, fmt.Errorf("mapping %q byte-order: %w", sig.MetricName, err)
-	}
-
-	value, metric, err := decode(sig, reordered, ts)
-	if err != nil {
-		return Result{}, fmt.Errorf("mapping %q decode: %w", sig.MetricName, err)
-	}
-	return Result{Value: value, Metric: metric}, nil
-}
-
-// BoolFromCoil extracts a single bool from a coil byte slice.
-// Modbus coils pack 8 coils per byte, LSB first.
-func BoolFromCoil(data []byte, bitIndex uint16) bool {
-	byteIdx := bitIndex / 8
-	bitIdx := bitIndex % 8
-	if int(byteIdx) >= len(data) {
-		return false
-	}
-	return (data[byteIdx]>>bitIdx)&1 == 1
-}
-
-// reorder applies byte/word swapping according to byteOrder and dataType.
-// Modbus wire format is always big-endian (ABCD). We may need to re-order
-// to match the PLC's internal representation.
+// Apply turns a DNP3 Measurement into a Sparkplug Metric, applying scale/offset
+// and attaching engineering unit + DNP3 quality flags as metric properties.
 //
-// ByteOrder values:
-//
-//	ABCD - big-endian (Modbus default, no swap)
-//	DCBA - little-endian (byte + word swapped)
-//	BADC - byte-swapped within each word, words in BE order
-//	CDAB - word-swapped, bytes within each word in BE order
-func reorder(data []byte, byteOrder, dataType string) ([]byte, error) {
-	if byteOrder == "" || byteOrder == "ABCD" {
-		return data, nil
+// Sparkplug timestamps are taken from the measurement (the outstation's clock,
+// already plausibility-checked by the master), not from the gateway clock.
+func Apply(sig config.SignalMapping, m dnp3.Measurement) (Result, error) {
+	if string(m.PointType) != sig.PointType {
+		return Result{}, fmt.Errorf("mapping %q: point type mismatch (mapping=%s, measurement=%s)",
+			sig.MetricName, sig.PointType, m.PointType)
 	}
-	n := len(data)
-	out := make([]byte, n)
-	switch byteOrder {
-	case "DCBA":
-		for i := 0; i < n; i++ {
-			out[i] = data[n-1-i]
-		}
-	case "BADC":
-		// swap bytes within each 2-byte word
-		for i := 0; i+1 < n; i += 2 {
-			out[i] = data[i+1]
-			out[i+1] = data[i]
-		}
-		if n%2 != 0 {
-			out[n-1] = data[n-1]
-		}
-	case "CDAB":
-		// swap 2-byte word order
-		if n == 4 {
-			out[0] = data[2]
-			out[1] = data[3]
-			out[2] = data[0]
-			out[3] = data[1]
-		} else if n == 8 {
-			out[0] = data[6]
-			out[1] = data[7]
-			out[2] = data[4]
-			out[3] = data[5]
-			out[4] = data[2]
-			out[5] = data[3]
-			out[6] = data[0]
-			out[7] = data[1]
-		} else {
-			return data, nil
-		}
-	default:
-		return nil, fmt.Errorf("unknown byteOrder %q", byteOrder)
-	}
-	return out, nil
-}
-
-func decode(sig config.SignalMapping, data []byte, ts uint64) (float64, *sparkplug.Metric, error) {
-	name := sig.MetricName
+	tsMs := uint64(m.Time.UnixMilli())
 	scale := sig.Scale
 	if scale == 0 {
 		scale = 1.0
 	}
-	applyLinear := func(raw float64) float64 { return raw*scale + sig.Offset }
 
-	switch sig.DataType {
-	case "bool":
-		val := BoolFromCoil(data, 0)
-		return boolToFloat(val), sparkplug.MetricBool(name, ts, val), nil
+	var metric *sparkplug.Metric
+	var value float64 = math.NaN()
 
-	case "int16":
-		if len(data) < 2 {
-			return 0, nil, fmt.Errorf("int16 needs 2 bytes, got %d", len(data))
+	switch m.PointType {
+	case dnp3.PointBinary, dnp3.PointBinaryOutputStatus:
+		metric = sparkplug.MetricBool(sig.MetricName, tsMs, m.BoolValue)
+		if m.BoolValue {
+			value = 1
+		} else {
+			value = 0
 		}
-		raw := int16(binary.BigEndian.Uint16(data[:2]))
-		eng := applyLinear(float64(raw))
-		return eng, metricDouble(name, ts, eng, sig), nil
 
-	case "uint16":
-		if len(data) < 2 {
-			return 0, nil, fmt.Errorf("uint16 needs 2 bytes, got %d", len(data))
-		}
-		raw := binary.BigEndian.Uint16(data[:2])
-		eng := applyLinear(float64(raw))
-		return eng, metricDouble(name, ts, eng, sig), nil
+	case dnp3.PointDoubleBitBinary:
+		v := uint32(m.DBBValue)
+		metric = sparkplug.MetricUInt32(sig.MetricName, tsMs, v)
+		value = float64(v)
 
-	case "int32":
-		if len(data) < 4 {
-			return 0, nil, fmt.Errorf("int32 needs 4 bytes, got %d", len(data))
+	case dnp3.PointCounter, dnp3.PointFrozenCounter:
+		eng := float64(m.UintValue)*scale + sig.Offset
+		if scale == 1.0 && sig.Offset == 0 {
+			metric = sparkplug.MetricUInt32(sig.MetricName, tsMs, m.UintValue)
+		} else {
+			metric = sparkplug.MetricDouble(sig.MetricName, tsMs, eng)
 		}
-		raw := int32(binary.BigEndian.Uint32(data[:4]))
-		eng := applyLinear(float64(raw))
-		return eng, metricDouble(name, ts, eng, sig), nil
+		value = eng
 
-	case "uint32":
-		if len(data) < 4 {
-			return 0, nil, fmt.Errorf("uint32 needs 4 bytes, got %d", len(data))
-		}
-		raw := binary.BigEndian.Uint32(data[:4])
-		eng := applyLinear(float64(raw))
-		return eng, metricDouble(name, ts, eng, sig), nil
+	case dnp3.PointAnalog, dnp3.PointAnalogOutputStatus:
+		eng := m.FloatValue*scale + sig.Offset
+		metric = sparkplug.MetricDouble(sig.MetricName, tsMs, eng)
+		value = eng
 
-	case "int64":
-		if len(data) < 8 {
-			return 0, nil, fmt.Errorf("int64 needs 8 bytes, got %d", len(data))
-		}
-		raw := int64(binary.BigEndian.Uint64(data[:8]))
-		eng := applyLinear(float64(raw))
-		return eng, metricDouble(name, ts, eng, sig), nil
-
-	case "uint64":
-		if len(data) < 8 {
-			return 0, nil, fmt.Errorf("uint64 needs 8 bytes, got %d", len(data))
-		}
-		raw := binary.BigEndian.Uint64(data[:8])
-		eng := applyLinear(float64(raw))
-		return eng, metricDouble(name, ts, eng, sig), nil
-
-	case "float32":
-		if len(data) < 4 {
-			return 0, nil, fmt.Errorf("float32 needs 4 bytes, got %d", len(data))
-		}
-		raw := math.Float32frombits(binary.BigEndian.Uint32(data[:4]))
-		eng := applyLinear(float64(raw))
-		return eng, metricDouble(name, ts, eng, sig), nil
-
-	case "float64":
-		if len(data) < 8 {
-			return 0, nil, fmt.Errorf("float64 needs 8 bytes, got %d", len(data))
-		}
-		raw := math.Float64frombits(binary.BigEndian.Uint64(data[:8]))
-		eng := applyLinear(raw)
-		return eng, metricDouble(name, ts, eng, sig), nil
+	case dnp3.PointOctetString:
+		metric = sparkplug.MetricString(sig.MetricName, tsMs, string(m.BytesValue))
 
 	default:
-		return 0, nil, fmt.Errorf("unsupported dataType %q", sig.DataType)
+		return Result{}, fmt.Errorf("mapping %q: unsupported point type %q", sig.MetricName, m.PointType)
 	}
+
+	metric.Properties = qualityProperties(m.Quality, sig.EngineeringUnit)
+	return Result{Value: value, Metric: metric, IsNull: !m.Quality.Good()}, nil
 }
 
-func boolToFloat(b bool) float64 {
-	if b {
-		return 1
+// qualityProperties packs DNP3 flags into a Sparkplug PropertySet so the
+// receiving SCADA can interpret point quality without out-of-band knowledge.
+func qualityProperties(q dnp3.Quality, engUnit string) *sparkplug.PropertySet {
+	ps := &sparkplug.PropertySet{}
+	addUint := func(k string, v uint32) {
+		val := v
+		ps.Keys = append(ps.Keys, k)
+		ps.Values = append(ps.Values, &sparkplug.PropertyValue{
+			Type: sparkplug.DataTypeUInt32, IntValue: &val,
+		})
+	}
+	addBool := func(k string, v bool) {
+		val := v
+		ps.Keys = append(ps.Keys, k)
+		ps.Values = append(ps.Values, &sparkplug.PropertyValue{
+			Type: sparkplug.DataTypeBoolean, BoolValue: &val,
+		})
+	}
+	addStr := func(k, v string) {
+		val := v
+		ps.Keys = append(ps.Keys, k)
+		ps.Values = append(ps.Values, &sparkplug.PropertyValue{
+			Type: sparkplug.DataTypeString, StringValue: &val,
+		})
+	}
+
+	addUint("quality", sparkplugQuality(q))
+	addUint("dnp3.flags", uint32(q))
+	addBool("dnp3.online", q&dnp3.QualityOnline != 0)
+	addBool("dnp3.restart", q&dnp3.QualityRestart != 0)
+	addBool("dnp3.comm_lost", q&dnp3.QualityCommLost != 0)
+	if engUnit != "" {
+		addStr("engUnit", engUnit)
+	}
+	return ps
+}
+
+// sparkplugQuality maps DNP3 flags to the SCADA quality convention used by
+// Sparkplug receivers (192 = GOOD, 64 = STALE, 0 = BAD).
+func sparkplugQuality(q dnp3.Quality) uint32 {
+	if q.Good() {
+		return 192
+	}
+	if q&dnp3.QualityOnline != 0 {
+		return 64
 	}
 	return 0
 }
 
-// metricDouble returns a Sparkplug Double metric.
-// We always publish doubles for numeric types for SCADA-system compatibility.
-func metricDouble(name string, ts uint64, value float64, sig config.SignalMapping) *sparkplug.Metric {
-	m := sparkplug.MetricDouble(name, ts, value)
-	if sig.EngineeringUnit != "" {
-		m.Properties = &sparkplug.PropertySet{
-			Keys: []string{"engUnit"},
-			Values: []*sparkplug.PropertyValue{
-				{Type: sparkplug.DataTypeString, StringValue: strPtr(sig.EngineeringUnit)},
-			},
-		}
-	}
-	return m
-}
-
-func strPtr(s string) *string { return &s }
-
-// CheckDeadband returns true if the value should be published based on deadband policy.
-// last is the previous published value (NaN if never published).
+// CheckDeadband returns true if the value should be published based on deadband.
 func CheckDeadband(current, last, deadband float64) bool {
+	if math.IsNaN(current) {
+		return true
+	}
 	if math.IsNaN(last) {
 		return true
 	}
@@ -221,32 +136,4 @@ func CheckDeadband(current, last, deadband float64) bool {
 		return true
 	}
 	return math.Abs(current-last) >= deadband
-}
-
-// RequiredBytes returns the minimum byte count for a given dataType.
-func RequiredBytes(dataType string) int {
-	switch dataType {
-	case "bool":
-		return 1
-	case "int16", "uint16":
-		return 2
-	case "int32", "uint32", "float32":
-		return 4
-	case "int64", "uint64", "float64":
-		return 8
-	default:
-		return 0
-	}
-}
-
-// RequiredRegisters returns how many 16-bit registers a dataType needs.
-func RequiredRegisters(dataType string) uint16 {
-	switch dataType {
-	case "int32", "uint32", "float32":
-		return 2
-	case "int64", "uint64", "float64":
-		return 4
-	default:
-		return 1
-	}
 }

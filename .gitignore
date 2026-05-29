@@ -13,6 +13,7 @@
 # Frontend build artifacts (embed_prod.go embeds from web/dist at build time)
 /web/dist/
 /web/node_modules/
+/web/package-lock.json
 
 # Container artifacts
 *.tar
@@ -24,7 +25,7 @@
 .vscode/
 
 # Vendored DNP3 shared libs (commit .a only for hermetic static builds)
-vendor/dnp3/**/*.so
-vendor/dnp3/**/*.so.*
-vendor/dnp3/**/*.dylib
-vendor/dnp3/**/*.dll
+third_party/dnp3/**/*.so
+third_party/dnp3/**/*.so.*
+third_party/dnp3/**/*.dylib
+third_party/dnp3/**/*.dll

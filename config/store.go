@@ -55,34 +55,34 @@ func (s *Store) UpdateSparkplug(sp SparkplugConfig) error {
 	return s.save()
 }
 
-// UpsertDevice adds or replaces a ModbusDevice by ID.
-func (s *Store) UpsertDevice(d ModbusDevice) error {
+// UpsertOutstation adds or replaces a DNP3Outstation by ID.
+func (s *Store) UpsertOutstation(o DNP3Outstation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i, dev := range s.cfg.Devices {
-		if dev.ID == d.ID {
-			s.cfg.Devices[i] = d
+	for i, ex := range s.cfg.Outstations {
+		if ex.ID == o.ID {
+			s.cfg.Outstations[i] = o
 			return s.save()
 		}
 	}
-	s.cfg.Devices = append(s.cfg.Devices, d)
+	s.cfg.Outstations = append(s.cfg.Outstations, o)
 	return s.save()
 }
 
-// DeleteDevice removes a ModbusDevice and its associated mappings by ID.
-func (s *Store) DeleteDevice(id string) error {
+// DeleteOutstation removes an outstation and any mappings that reference it.
+func (s *Store) DeleteOutstation(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	filtered := s.cfg.Devices[:0]
-	for _, d := range s.cfg.Devices {
-		if d.ID != id {
-			filtered = append(filtered, d)
+	filtered := s.cfg.Outstations[:0]
+	for _, o := range s.cfg.Outstations {
+		if o.ID != id {
+			filtered = append(filtered, o)
 		}
 	}
-	s.cfg.Devices = filtered
+	s.cfg.Outstations = filtered
 	mappings := s.cfg.Mappings[:0]
 	for _, m := range s.cfg.Mappings {
-		if m.ModbusDeviceID != id {
+		if m.OutstationID != id {
 			mappings = append(mappings, m)
 		}
 	}

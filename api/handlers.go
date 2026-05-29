@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"goMqttModbus/config"
-	"goMqttModbus/publisher"
+	"goMqttDnp3/config"
+	"goMqttDnp3/publisher"
 )
 
 // Gateway is the interface that api handlers call into.
@@ -41,8 +41,8 @@ func (g *gatewayImpl) logEvent(level, msg string) {
 
 // Server is the HTTP API + WebSocket server.
 type Server struct {
-	mux   *http.ServeMux
-	gw    *gatewayImpl
+	mux *http.ServeMux
+	gw  *gatewayImpl
 }
 
 // NewServer constructs the API server.
@@ -54,10 +54,8 @@ func NewServer(store *config.Store, hub *Hub, staticFS http.Handler) *Server {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Security headers
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	// CORS for local dev (Vite dev server proxy)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -76,8 +74,8 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/api/config/mqtt", s.handleMQTT)
 	s.mux.HandleFunc("/api/config/sparkplug", s.handleSparkplug)
 
-	s.mux.HandleFunc("/api/devices", s.handleDevices)
-	s.mux.HandleFunc("/api/devices/", s.handleDevice)
+	s.mux.HandleFunc("/api/outstations", s.handleOutstations)
+	s.mux.HandleFunc("/api/outstations/", s.handleOutstation)
 
 	s.mux.HandleFunc("/api/mappings", s.handleMappings)
 	s.mux.HandleFunc("/api/mappings/export", s.handleMappingsExport)
@@ -94,13 +92,11 @@ func (s *Server) routes(staticFS http.Handler) {
 	}
 }
 
-// --- Health ---
+// --- Health / Status ---
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]string{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})
 }
-
-// --- Status ---
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	st := publisher.Status{}
@@ -170,63 +166,63 @@ func (s *Server) handleSparkplug(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- Devices ---
+// --- Outstations ---
 
-func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleOutstations(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeOK(w, s.gw.store.Get().Devices)
+		writeOK(w, s.gw.store.Get().Outstations)
 	case http.MethodPost:
-		var dev config.ModbusDevice
-		if err := decode(r.Body, &dev); err != nil {
+		var o config.DNP3Outstation
+		if err := decode(r.Body, &o); err != nil {
 			writeFail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := validateDevice(dev); err != nil {
+		if err := validateOutstation(o); err != nil {
 			writeFail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := s.gw.store.UpsertDevice(dev); err != nil {
+		if err := s.gw.store.UpsertOutstation(o); err != nil {
 			writeFail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.gw.logEvent("info", "Device added: "+dev.ID)
-		writeOK(w, dev)
+		s.gw.logEvent("info", "Outstation added: "+o.ID)
+		writeOK(w, o)
 	default:
 		writeFail(w, http.StatusMethodNotAllowed, "GET or POST")
 	}
 }
 
-func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/devices/")
+func (s *Server) handleOutstation(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/outstations/")
 	if id == "" {
-		writeFail(w, http.StatusBadRequest, "missing device id")
+		writeFail(w, http.StatusBadRequest, "missing outstation id")
 		return
 	}
 	switch r.Method {
 	case http.MethodPut:
-		var dev config.ModbusDevice
-		if err := decode(r.Body, &dev); err != nil {
+		var o config.DNP3Outstation
+		if err := decode(r.Body, &o); err != nil {
 			writeFail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		dev.ID = id
-		if err := validateDevice(dev); err != nil {
+		o.ID = id
+		if err := validateOutstation(o); err != nil {
 			writeFail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := s.gw.store.UpsertDevice(dev); err != nil {
+		if err := s.gw.store.UpsertOutstation(o); err != nil {
 			writeFail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.gw.logEvent("info", "Device updated: "+id)
-		writeOK(w, dev)
+		s.gw.logEvent("info", "Outstation updated: "+id)
+		writeOK(w, o)
 	case http.MethodDelete:
-		if err := s.gw.store.DeleteDevice(id); err != nil {
+		if err := s.gw.store.DeleteOutstation(id); err != nil {
 			writeFail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.gw.logEvent("info", "Device deleted: "+id)
+		s.gw.logEvent("info", "Outstation deleted: "+id)
 		writeOK(w, nil)
 	default:
 		writeFail(w, http.StatusMethodNotAllowed, "PUT or DELETE")
@@ -349,7 +345,7 @@ func (s *Server) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.gw.store.Get()
 	pub := publisher.New(cfg)
-	pub.OnLog = func(level, msg string) {
+	pub.LogSink = func(level, msg string) {
 		s.gw.logEvent(level, msg)
 	}
 	pub.OnStatus = func(st publisher.Status) {
@@ -399,64 +395,59 @@ func validateSparkplug(cfg config.SparkplugConfig) error {
 	return nil
 }
 
-func validateDevice(dev config.ModbusDevice) error {
-	if dev.ID == "" {
+func validateOutstation(o config.DNP3Outstation) error {
+	if o.ID == "" {
 		return fmt.Errorf("id is required")
 	}
-	if dev.Host == "" {
+	if o.Host == "" {
 		return fmt.Errorf("host is required")
 	}
-	if dev.Port == 0 {
-		dev.Port = 502
+	if o.Port == 0 {
+		o.Port = 20000
 	}
-	if dev.Port < 1 || dev.Port > 65535 {
+	if o.Port < 1 || o.Port > 65535 {
 		return fmt.Errorf("port must be 1-65535")
+	}
+	if o.MasterAddress == 0 {
+		return fmt.Errorf("masterAddress is required (typical: 1)")
+	}
+	if o.OutstationAddress == 0 {
+		return fmt.Errorf("outstationAddress is required")
 	}
 	return nil
 }
 
-var validFunctions = map[string]bool{
-	"coil": true, "discrete_input": true,
-	"input_register": true, "holding_register": true,
-}
-
-var validDataTypes = map[string]bool{
-	"bool": true, "int16": true, "uint16": true,
-	"int32": true, "uint32": true, "float32": true,
-	"int64": true, "uint64": true, "float64": true,
-}
-
-var validByteOrders = map[string]bool{
-	"": true, "ABCD": true, "DCBA": true, "BADC": true, "CDAB": true,
+var validPointTypes = map[string]bool{
+	"binary":               true,
+	"double_bit_binary":    true,
+	"binary_output_status": true,
+	"counter":              true,
+	"frozen_counter":       true,
+	"analog":               true,
+	"analog_output_status": true,
+	"octet_string":         true,
 }
 
 func validateMapping(sig config.SignalMapping, cfg config.AppConfig) error {
 	if sig.MetricName == "" {
 		return fmt.Errorf("metricName is required")
 	}
-	if !validFunctions[sig.Function] {
-		return fmt.Errorf("function must be coil|discrete_input|input_register|holding_register")
+	if !validPointTypes[sig.PointType] {
+		return fmt.Errorf("pointType must be one of binary|double_bit_binary|binary_output_status|counter|frozen_counter|analog|analog_output_status|octet_string")
 	}
-	if !validDataTypes[sig.DataType] {
-		return fmt.Errorf("invalid dataType %q", sig.DataType)
+	if sig.EventClass > 3 {
+		return fmt.Errorf("eventClass must be 0..3")
 	}
-	if !validByteOrders[sig.ByteOrder] {
-		return fmt.Errorf("byteOrder must be ABCD|DCBA|BADC|CDAB")
-	}
-	if sig.ScanRateMs != 0 && sig.ScanRateMs < 100 {
-		return fmt.Errorf("scanRateMs must be >= 100 (got %d)", sig.ScanRateMs)
-	}
-	// Check referenced device exists
-	if sig.ModbusDeviceID != "" {
+	if sig.OutstationID != "" {
 		found := false
-		for _, d := range cfg.Devices {
-			if d.ID == sig.ModbusDeviceID {
+		for _, o := range cfg.Outstations {
+			if o.ID == sig.OutstationID {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return fmt.Errorf("modbusDeviceId %q not found", sig.ModbusDeviceID)
+			return fmt.Errorf("outstationId %q not found", sig.OutstationID)
 		}
 	}
 	return nil
@@ -480,6 +471,5 @@ func writeFail(w http.ResponseWriter, status int, msg string) {
 }
 
 func newID() string {
-	// Simple UUID-like ID using current time + random suffix.
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }

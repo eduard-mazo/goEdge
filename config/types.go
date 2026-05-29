@@ -2,10 +2,10 @@ package config
 
 // AppConfig is the top-level persisted configuration.
 type AppConfig struct {
-	MQTT      MQTTConfig      `json:"mqtt"`
-	Sparkplug SparkplugConfig `json:"sparkplug"`
-	Devices   []ModbusDevice  `json:"devices"`
-	Mappings  []SignalMapping  `json:"mappings"`
+	MQTT        MQTTConfig       `json:"mqtt"`
+	Sparkplug   SparkplugConfig  `json:"sparkplug"`
+	Outstations []DNP3Outstation `json:"outstations"`
+	Mappings    []SignalMapping  `json:"mappings"`
 }
 
 // MQTTConfig holds broker connection parameters.
@@ -35,23 +35,42 @@ type SparkplugConfig struct {
 	BirthOnConfigChange bool   `json:"birthOnConfigChange"`
 }
 
-// ModbusDevice represents a Modbus TCP target device.
-type ModbusDevice struct {
-	ID         string `json:"id"`         // unique slug (user-defined)
-	Label      string `json:"label"`      // human-readable name
-	Host       string `json:"host"`
-	Port       int    `json:"port"`       // default 502
-	TimeoutMs  int    `json:"timeoutMs"`  // connect + read timeout; default 3000
-	Retries    int    `json:"retries"`    // per-read retry count; default 2
-	RetryDelayMs int  `json:"retryDelayMs"` // delay between retries; default 500
-	Enabled    bool   `json:"enabled"`
+// DNP3Outstation represents a DNP3 outstation reachable via TCP.
+// One TCP channel per (host:port); one association per (master, outstation) link address pair.
+type DNP3Outstation struct {
+	ID                 string `json:"id"`                 // unique slug (user-defined)
+	Label              string `json:"label"`              // human-readable name
+	Host               string `json:"host"`
+	Port               int    `json:"port"`               // DNP3/IP default 20000
+	MasterAddress      uint16 `json:"masterAddress"`      // local link-layer address (typical 1)
+	OutstationAddress  uint16 `json:"outstationAddress"`  // remote link-layer address (typical 1024+)
+	ResponseTimeoutMs  int    `json:"responseTimeoutMs"`  // app-layer response timeout; default 5000
+	KeepAliveMs        int    `json:"keepAliveMs"`        // app-layer keep-alive interval; default 60000
+
+	// Polling cadence (0 = disabled).
+	IntegrityScanMs int `json:"integrityScanMs"` // periodic integrity poll (class 0+1+2+3); default 3600000
+	Class1ScanMs    int `json:"class1ScanMs"`    // event class 1 poll; default 1000
+	Class2ScanMs    int `json:"class2ScanMs"`    // event class 2 poll; default 5000
+	Class3ScanMs    int `json:"class3ScanMs"`    // event class 3 poll; default 30000
+
+	// Unsolicited responses.
+	UnsolicitedEnabled bool `json:"unsolicitedEnabled"` // send ENABLE_UNSOLICITED on startup
+	UnsolicitedClass1  bool `json:"unsolicitedClass1"`
+	UnsolicitedClass2  bool `json:"unsolicitedClass2"`
+	UnsolicitedClass3  bool `json:"unsolicitedClass3"`
+
+	// Startup behavior.
+	DisableUnsolOnStartup bool `json:"disableUnsolOnStartup"` // DISABLE_UNSOLICITED before initial integrity poll
+	StartupIntegrity      bool `json:"startupIntegrity"`      // perform integrity poll on connect
+
+	Enabled bool `json:"enabled"`
 }
 
-// Addr returns "host:port" for the device.
-func (d ModbusDevice) Addr() string {
+// Addr returns "host:port" for the outstation.
+func (d DNP3Outstation) Addr() string {
 	port := d.Port
 	if port == 0 {
-		port = 502
+		port = 20000
 	}
 	return d.Host + ":" + itoa(port)
 }
@@ -70,25 +89,30 @@ func itoa(n int) string {
 	return string(buf[pos:])
 }
 
-// SignalMapping maps a Modbus register read to a Sparkplug B metric.
+// SignalMapping maps a DNP3 point to a Sparkplug B metric.
+// DNP3 points are addressed by (Group, Variation, Index).
+// The library delivers typed measurements; no byte-order/scaling decoding is needed.
 type SignalMapping struct {
-	ID              string  `json:"id"`              // uuid
-	MetricName      string  `json:"metricName"`      // unique metric name
-	DeviceID        string  `json:"deviceId"`        // Sparkplug device ID; empty = node metric
-	ModbusDeviceID  string  `json:"modbusDeviceId"`  // ref to ModbusDevice.ID
-	UnitID          uint8   `json:"unitId"`
-	Function        string  `json:"function"`        // coil|discrete_input|input_register|holding_register
-	Address         uint16  `json:"address"`
-	Quantity        uint16  `json:"quantity"`        // registers/coils; must match dataType
-	DataType        string  `json:"dataType"`        // bool|int16|uint16|int32|uint32|int64|uint64|float32|float64
-	ByteOrder       string  `json:"byteOrder"`       // ABCD|DCBA|BADC|CDAB
+	ID            string  `json:"id"`            // uuid
+	MetricName    string  `json:"metricName"`    // unique metric name
+	DeviceID      string  `json:"deviceId"`      // Sparkplug device ID; empty = node metric
+	OutstationID  string  `json:"outstationId"`  // ref to DNP3Outstation.ID
+
+	// DNP3 point identity.
+	PointType string `json:"pointType"` // binary|double_bit_binary|binary_output_status|counter|frozen_counter|analog|analog_output_status|octet_string
+	Index     uint16 `json:"index"`     // point index within its type
+	EventClass uint8 `json:"eventClass"` // 0=static-only, 1|2|3 = event class assignment (informational/UI; outstation configures this)
+
+	// Engineering value transform (kept for analog scaling at gateway side if outstation reports raw counts).
 	Scale           float64 `json:"scale"`           // multiplier; default 1.0
 	Offset          float64 `json:"offset"`          // addend after scale; default 0.0
 	EngineeringUnit string  `json:"engineeringUnit"`
-	ScanRateMs      int     `json:"scanRateMs"`      // >= 100
-	Deadband        float64 `json:"deadband"`        // min change to publish; 0 = always publish
-	QualityPolicy   string  `json:"qualityPolicy"`   // good|bad_on_error|last_known
-	Enabled         bool    `json:"enabled"`
+
+	// Publish-time controls.
+	Deadband      float64 `json:"deadband"`      // min change to publish (post-scale); 0 = always publish on event
+	PublishOnPoll bool    `json:"publishOnPoll"` // also publish static reads (not only events)
+
+	Enabled bool `json:"enabled"`
 }
 
 // DefaultAppConfig returns a config with sane defaults.
@@ -96,15 +120,15 @@ func DefaultAppConfig() AppConfig {
 	return AppConfig{
 		MQTT: MQTTConfig{
 			Broker:    "tcp://localhost:1883",
-			ClientID:  "goMqttModbus",
+			ClientID:  "goMqttDnp3",
 			QoS:       1,
 			Keepalive: 60,
 		},
 		Sparkplug: SparkplugConfig{
 			GroupID: "plant-floor",
-			NodeID:  "modbus-gw",
+			NodeID:  "dnp3-gw",
 		},
-		Devices:  []ModbusDevice{},
-		Mappings: []SignalMapping{},
+		Outstations: []DNP3Outstation{},
+		Mappings:    []SignalMapping{},
 	}
 }

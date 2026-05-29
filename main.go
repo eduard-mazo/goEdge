@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"goMqttModbus/api"
-	"goMqttModbus/config"
+	"goMqttDnp3/api"
+	"goMqttDnp3/config"
 )
 
 func main() {
@@ -30,7 +30,7 @@ func main() {
 	srv := api.NewServer(store, hub, staticHandler())
 
 	addr := ":" + *port
-	slog.Info("goMqttModbus gateway", "addr", "http://localhost"+addr, "config", *cfgPath)
+	slog.Info("goMqttDnp3 gateway", "addr", "http://localhost"+addr, "config", *cfgPath)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
