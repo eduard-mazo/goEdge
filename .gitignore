@@ -1,0 +1,30 @@
+# Binaries
+/goMqttModbus
+/goMqttDnp3
+/gatewayIcr323x
+/gatewayWin
+*.exe
+*.test
+*.out
+
+# Runtime config (use configs/example.json as template)
+/config.json
+
+# Frontend build artifacts (embed_prod.go embeds from web/dist at build time)
+/web/dist/
+/web/node_modules/
+
+# Container artifacts
+*.tar
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Vendored DNP3 shared libs (commit .a only for hermetic static builds)
+vendor/dnp3/**/*.so
+vendor/dnp3/**/*.so.*
+vendor/dnp3/**/*.dylib
+vendor/dnp3/**/*.dll

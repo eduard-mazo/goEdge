@@ -1,0 +1,106 @@
+{
+  "mqtt": {
+    "broker": "tcp://192.168.1.10:1883",
+    "clientId": "modbus-gw-01",
+    "username": "",
+    "password": "",
+    "qos": 1,
+    "keepalive": 60,
+    "tls": { "enabled": false }
+  },
+  "sparkplug": {
+    "groupId": "plant-floor",
+    "nodeId": "modbus-gw-01",
+    "birthOnConfigChange": true
+  },
+  "devices": [
+    {
+      "id": "plc-01",
+      "label": "Main PLC",
+      "host": "192.168.1.100",
+      "port": 502,
+      "timeoutMs": 3000,
+      "retries": 2,
+      "retryDelayMs": 500,
+      "enabled": true
+    }
+  ],
+  "mappings": [
+    {
+      "id": "1",
+      "metricName": "tank/level_m",
+      "deviceId": "",
+      "modbusDeviceId": "plc-01",
+      "unitId": 1,
+      "function": "holding_register",
+      "address": 100,
+      "quantity": 2,
+      "dataType": "float32",
+      "byteOrder": "ABCD",
+      "scale": 1.0,
+      "offset": 0.0,
+      "engineeringUnit": "m",
+      "scanRateMs": 1000,
+      "deadband": 0.005,
+      "qualityPolicy": "last_known",
+      "enabled": true
+    },
+    {
+      "id": "2",
+      "metricName": "tank/level_pct",
+      "deviceId": "",
+      "modbusDeviceId": "plc-01",
+      "unitId": 1,
+      "function": "holding_register",
+      "address": 102,
+      "quantity": 1,
+      "dataType": "uint16",
+      "byteOrder": "ABCD",
+      "scale": 0.1,
+      "offset": 0.0,
+      "engineeringUnit": "%",
+      "scanRateMs": 1000,
+      "deadband": 0.1,
+      "qualityPolicy": "last_known",
+      "enabled": true
+    },
+    {
+      "id": "3",
+      "metricName": "pump/running",
+      "deviceId": "",
+      "modbusDeviceId": "plc-01",
+      "unitId": 1,
+      "function": "coil",
+      "address": 0,
+      "quantity": 1,
+      "dataType": "bool",
+      "byteOrder": "ABCD",
+      "scale": 1.0,
+      "offset": 0.0,
+      "engineeringUnit": "",
+      "scanRateMs": 500,
+      "deadband": 0,
+      "qualityPolicy": "good",
+      "enabled": true
+    },
+    {
+      "id": "4",
+      "metricName": "motor/temperature_C",
+      "deviceId": "motor-01",
+      "modbusDeviceId": "plc-01",
+      "unitId": 1,
+      "function": "input_register",
+      "address": 200,
+      "quantity": 1,
+      "dataType": "int16",
+      "byteOrder": "ABCD",
+      "scale": 0.1,
+      "offset": 0.0,
+      "engineeringUnit": "°C",
+      "scanRateMs": 2000,
+      "deadband": 0.5,
+      "qualityPolicy": "last_known",
+      "enabled": true
+    }
+  ]
+}
