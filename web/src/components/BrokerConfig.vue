@@ -10,7 +10,7 @@
             <input v-model="form.broker" class="forge-input" placeholder="tcp://localhost:1883" required />
           </Field>
           <Field label="Client ID">
-            <input v-model="form.clientId" class="forge-input" placeholder="goMqttModbus" required />
+            <input v-model="form.clientId" class="forge-input" placeholder="goMqttDnp3" required />
           </Field>
         </div>
 
@@ -93,7 +93,7 @@ const saved  = ref(false)
 const error  = ref('')
 
 const form = ref<MQTTConfig>({
-  broker: 'tcp://localhost:1883', clientId: 'goMqttModbus',
+  broker: 'tcp://localhost:1883', clientId: 'goMqttDnp3',
   username: '', password: '', qos: 1, keepalive: 60,
   tls: { enabled: false },
 })

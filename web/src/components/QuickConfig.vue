@@ -64,7 +64,7 @@
           </div>
           <div>
             <label class="forge-label">Node ID</label>
-            <input v-model="sp.nodeId" class="forge-input" placeholder="modbus-gw" />
+            <input v-model="sp.nodeId" class="forge-input" placeholder="dnp3-gw" />
           </div>
           <!-- Topic preview -->
           <div class="font-mono text-[10px] text-text-secondary border border-border rounded-md p-3 space-y-1 leading-relaxed"
@@ -96,11 +96,11 @@ const saving = ref({ mqtt: false, sp: false })
 const saved  = ref({ mqtt: false, sp: false })
 
 const mqtt = ref<MQTTConfig>({
-  broker: 'tcp://localhost:1883', clientId: 'goMqttModbus',
+  broker: 'tcp://localhost:1883', clientId: 'goMqttDnp3',
   username: '', password: '', qos: 1, keepalive: 60,
   tls: { enabled: false },
 })
-const sp = ref<SparkplugConfig>({ groupId: 'plant-floor', nodeId: 'modbus-gw' })
+const sp = ref<SparkplugConfig>({ groupId: 'plant-floor', nodeId: 'dnp3-gw' })
 
 onMounted(async () => {
   try { mqtt.value = await api.getMQTT() } catch {}

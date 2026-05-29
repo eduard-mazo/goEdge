@@ -27,40 +27,42 @@
       />
     </div>
 
-    <!-- Devices grid -->
+    <!-- Outstations grid -->
     <section>
       <div class="flex items-center gap-3 mb-3">
-        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">Modbus Devices</h3>
+        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">DNP3 Outstations</h3>
         <div class="rule-brand flex-1" />
-        <span class="font-mono text-[10px] text-text-dim">{{ devList.length }} device{{ devList.length !== 1 ? 's' : '' }}</span>
+        <span class="font-mono text-[10px] text-text-dim">{{ osList.length }} outstation{{ osList.length !== 1 ? 's' : '' }}</span>
       </div>
 
-      <div v-if="!devList.length"
+      <div v-if="!osList.length"
            class="forge-panel text-center py-10">
-        <p class="font-mono text-xs text-text-dim">No devices configured — add one in the Devices panel</p>
+        <p class="font-mono text-xs text-text-dim">No outstations configured — add one in the Outstations panel</p>
       </div>
 
       <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         <div
-          v-for="dev in devList" :key="dev.id"
+          v-for="o in osList" :key="o.id"
           class="forge-panel p-4 flex items-start gap-3 transition-all duration-200 hover:shadow-md hover:border-[color:var(--tk-border-bright)]"
         >
-          <div :class="['led mt-1 shrink-0', dev.connected ? 'led--green' : 'led--red']" />
+          <div :class="['led mt-1 shrink-0', o.connected ? 'led--green' : 'led--red']" />
           <div class="min-w-0 flex-1">
-            <div class="font-sans font-bold text-sm truncate">{{ dev.label || dev.id }}</div>
-            <div class="font-mono text-[11px] text-text-secondary mt-0.5">{{ dev.addr }}</div>
+            <div class="font-sans font-bold text-sm truncate">{{ o.label || o.id }}</div>
+            <div class="font-mono text-[11px] text-text-secondary mt-0.5">{{ o.addr }}</div>
+            <div v-if="o.lastError && !o.connected" class="font-mono text-[10px] text-red-base mt-1 truncate" :title="o.lastError">
+              {{ o.lastError }}
+            </div>
             <div class="flex gap-4 mt-2.5 font-mono text-[11px]">
               <span class="text-text-dim">
-                reads <span class="text-foreground font-medium">{{ dev.reads }}</span>
+                rx <span class="text-foreground font-medium">{{ o.measurementsRx ?? 0 }}</span>
               </span>
-              <span class="text-text-dim">
-                errors
-                <span :class="dev.errors > 0 ? 'text-red-base font-semibold' : 'text-foreground font-medium'">{{ dev.errors }}</span>
+              <span class="text-text-dim" v-if="o.lastReadAt">
+                last <span class="text-foreground font-medium">{{ relTime(o.lastReadAt) }}</span>
               </span>
             </div>
           </div>
-          <span :class="['signal-badge self-start shrink-0', dev.connected ? 'signal-badge--on' : 'signal-badge--off']">
-            {{ dev.connected ? 'OK' : 'FAULT' }}
+          <span :class="['signal-badge self-start shrink-0', o.connected ? 'signal-badge--on' : 'signal-badge--off']">
+            {{ o.connected ? 'OK' : 'FAULT' }}
           </span>
         </div>
       </div>
@@ -76,7 +78,7 @@
 
       <div v-if="!readings.length"
            class="forge-panel text-center py-10">
-        <p class="font-mono text-xs text-text-dim">No readings yet — start the gateway to begin polling</p>
+        <p class="font-mono text-xs text-text-dim">No readings yet — start the gateway to begin receiving measurements</p>
       </div>
 
       <div v-else class="forge-panel overflow-x-auto">
@@ -107,7 +109,7 @@ import StatCard from './StatCard.vue'
 
 const store = useGatewayStore()
 
-const devList = computed(() => Object.values(store.status?.devices ?? {}))
+const osList = computed(() => Object.values(store.status?.outstations ?? {}))
 
 const readings = computed(() =>
   Object.entries(store.status?.lastReadings ?? {})
@@ -125,5 +127,14 @@ function fmtCount(n?: number) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
   return n.toString()
+}
+
+function relTime(iso: string) {
+  const t = new Date(iso).getTime()
+  if (!isFinite(t)) return '—'
+  const delta = Math.max(0, Date.now() - t)
+  if (delta < 60_000) return Math.round(delta / 1000) + 's ago'
+  if (delta < 3_600_000) return Math.round(delta / 60_000) + 'm ago'
+  return Math.round(delta / 3_600_000) + 'h ago'
 }
 </script>

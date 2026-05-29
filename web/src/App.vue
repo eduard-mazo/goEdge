@@ -12,7 +12,7 @@
           M
         </div>
         <div class="sidebar-wide-only leading-none flex-1 min-w-0">
-          <div class="font-sans text-base font-extrabold tracking-tight text-white truncate">Modbus GW</div>
+          <div class="font-sans text-base font-extrabold tracking-tight text-white truncate">DNP3 GW</div>
           <div class="text-[10px] uppercase tracking-[0.18em] text-[color:var(--epm-citrico)] mt-0.5 font-semibold">
             Sparkplug B
           </div>
@@ -148,7 +148,7 @@
         <Dashboard       v-if="activeTab === 'dashboard'" />
         <BrokerConfig    v-if="activeTab === 'broker'" />
         <SparkplugCfg    v-if="activeTab === 'sparkplug'" />
-        <DevicesConfig   v-if="activeTab === 'devices'" />
+        <OutstationsConfig v-if="activeTab === 'outstations'" />
         <MappingTable    v-if="activeTab === 'mappings'" />
         <LogConsole      v-if="activeTab === 'logs'" />
       </main>
@@ -159,10 +159,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
+import { api } from '@/api/client'
 import Dashboard     from '@/components/Dashboard.vue'
 import BrokerConfig  from '@/components/BrokerConfig.vue'
 import SparkplugCfg  from '@/components/SparkplugConfig.vue'
-import DevicesConfig from '@/components/DevicesConfig.vue'
+import OutstationsConfig from '@/components/OutstationsConfig.vue'
 import MappingTable  from '@/components/MappingTable.vue'
 import LogConsole    from '@/components/LogConsole.vue'
 import QuickConfig   from '@/components/QuickConfig.vue'
@@ -181,7 +182,7 @@ const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: IconGauge  },
   { id: 'broker',    label: 'Broker',    icon: IconWifi   },
   { id: 'sparkplug', label: 'Sparkplug', icon: IconSpark  },
-  { id: 'devices',   label: 'Devices',   icon: IconDevice },
+  { id: 'outstations', label: 'Outstations', icon: IconDevice },
   { id: 'mappings',  label: 'Mappings',  icon: IconMap    },
   { id: 'logs',      label: 'Log',       icon: IconLog    },
 ] as const
@@ -195,9 +196,14 @@ const dark       = ref(false)
 const activeTabLabel = computed(() => tabs.find(t => t.id === activeTab.value)?.label ?? '')
 
 const brokerHost = computed(() => {
-  const d = store.devices?.[0]
-  return store.status?.mqttConnected && d ? `${d.host}:${d.port ?? 502}` : '—'
+  if (!store.status?.mqttConnected) return '—'
+  // Strip scheme prefix (tcp://, ssl://) from the configured broker URL for display.
+  const broker = mqttBroker.value
+  return broker.replace(/^[a-z]+:\/\//, '') || '—'
 })
+
+const mqttBroker = ref('')
+api.getMQTT().then(c => { mqttBroker.value = c.broker }).catch(() => {})
 
 async function doStart() {
   try { await store.startGateway() }
@@ -222,7 +228,7 @@ onMounted(() => {
   document.documentElement.classList.toggle('dark', dark.value)
 
   store.loadStatus()
-  store.loadDevices()
+  store.loadOutstations()
   store.loadMappings()
   store.connectWS()
   setInterval(() => store.loadStatus(), 4000)

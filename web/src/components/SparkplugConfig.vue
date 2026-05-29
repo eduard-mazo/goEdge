@@ -10,7 +10,7 @@
         </Field>
 
         <Field label="Node ID" hint="Unique EoN node identifier on this broker">
-          <input v-model="form.nodeId" class="forge-input" placeholder="modbus-gw-01" required />
+          <input v-model="form.nodeId" class="forge-input" placeholder="dnp3-gw-01" required />
         </Field>
 
         <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
@@ -74,7 +74,7 @@ const saving = ref(false)
 const saved  = ref(false)
 const error  = ref('')
 
-const form = ref<SparkplugConfig>({ groupId: 'plant-floor', nodeId: 'modbus-gw' })
+const form = ref<SparkplugConfig>({ groupId: 'plant-floor', nodeId: 'dnp3-gw' })
 
 onMounted(async () => { try { form.value = await api.getSparkplug() } catch {} })
 
