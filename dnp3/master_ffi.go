@@ -428,9 +428,18 @@ func (m *ffiMaster) Start(_ context.Context) error {
 	if err := m.ensureRuntime(); err != nil {
 		return err
 	}
+	// Snapshot the assoc list while holding the lock, then release it before
+	// any C call. dnp3_master_channel_create_tcp invokes the client-state
+	// listener synchronously (state=CONNECTING), which calls back into Go and
+	// ultimately into master.Status() — if we still held m.mu, that would
+	// deadlock with the calling goroutine.
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	list := make([]*assocCtx, 0, len(m.assocs))
 	for _, ctx := range m.assocs {
+		list = append(list, ctx)
+	}
+	m.mu.Unlock()
+	for _, ctx := range list {
 		if err := m.bringUpLocked(ctx); err != nil {
 			return err
 		}
@@ -568,18 +577,31 @@ func (m *ffiMaster) Stop() {
 	if !m.started.Swap(false) {
 		return
 	}
+	// Snapshot under the lock, then call into the lib without holding it —
+	// dnp3_master_channel_destroy fires SHUTDOWN state-change + on_destroy
+	// callbacks synchronously, which would re-enter master.Status() and
+	// deadlock if we still held m.mu.
 	m.mu.Lock()
+	list := make([]*assocCtx, 0, len(m.assocs))
 	for _, ctx := range m.assocs {
+		list = append(list, ctx)
+	}
+	m.mu.Unlock()
+
+	for _, ctx := range list {
 		if ctx.channel != nil {
 			C.dnp3_master_channel_destroy(ctx.channel)
 			ctx.channel = nil
 		}
 	}
+
+	m.mu.Lock()
 	for id, ctx := range m.assocs {
 		ctx.handle.Delete()
 		delete(m.assocs, id)
 	}
 	m.mu.Unlock()
+
 	if m.rt != nil {
 		C.dnp3_runtime_set_shutdown_timeout(m.rt, 5)
 		C.dnp3_runtime_destroy(m.rt)
