@@ -105,22 +105,63 @@ export type PointType =
   | 'analog_output_status'
   | 'octet_string'
 
+export type Protocol = 'dnp3' | 'modbus'
+
+export type ModbusFunction =
+  | 'coil'
+  | 'discrete_input'
+  | 'input_register'
+  | 'holding_register'
+
+export type ModbusDataType =
+  | 'bool'
+  | 'int16'
+  | 'uint16'
+  | 'int32'
+  | 'uint32'
+  | 'float32'
+  | 'float64'
+
+export interface ModbusDevice {
+  id: string
+  label: string
+  host: string
+  port: number               // default 502
+  unitId: number             // Modbus slave/unit id
+  scanRateMs?: number        // poll cadence; default 1000
+  timeoutMs?: number         // default 3000
+  retries?: number           // default 2
+  retryDelayMs?: number      // default 500
+  enabled: boolean
+}
+
 export interface SignalMapping {
   id: string
   metricName: string
   deviceId?: string          // Sparkplug device ID; empty = node metric
-  outstationId: string       // ref to DNP3Outstation.id
 
+  protocol?: Protocol        // 'dnp3' (default) | 'modbus'
+  sourceId?: string          // ref to source (outstation/device); falls back to outstationId
+  outstationId: string       // legacy DNP3 alias of sourceId
+
+  // DNP3 point identity
   pointType: PointType
-  index: number              // point index within its type
-  eventClass: number         // 0=static, 1|2|3 = event class assignment (informational)
+  index: number
+  eventClass: number
 
-  scale?: number             // value × scale + offset
+  // Modbus point identity
+  function?: ModbusFunction
+  address?: number
+  quantity?: number
+  dataType?: ModbusDataType
+  byteOrder?: string         // ABCD|DCBA|BADC|CDAB
+
+  scale?: number
   offset?: number
   engineeringUnit?: string
 
-  deadband?: number          // 0 = always publish on event
-  publishOnPoll?: boolean    // also publish static reads
+  deadband?: number
+  publishOnPoll?: boolean
 
   enabled: boolean
 }
@@ -129,6 +170,7 @@ export interface AppConfig {
   mqtt: MQTTConfig
   sparkplug: SparkplugConfig
   outstations: DNP3Outstation[]
+  modbusDevices: ModbusDevice[]
   mappings: SignalMapping[]
 }
 
@@ -139,10 +181,13 @@ export interface GatewayStatus {
   outstations: Record<string, OutstationStatus>
   publishCount: number
   errorCount: number
+  droppedCount?: number
   uptime: string
   lastReadings: Record<string, number>
 }
 
+// OutstationStatus is the per-source status snapshot (DNP3 outstation or Modbus
+// device — the gateway reports both under GatewayStatus.outstations).
 export interface OutstationStatus {
   id: string
   label: string

@@ -146,6 +146,7 @@
       <!-- Tab content -->
       <main class="flex-1 min-h-0 overflow-auto p-4 md:p-6">
         <Dashboard       v-if="activeTab === 'dashboard'" />
+        <LiveValues      v-if="activeTab === 'live'" />
         <BrokerConfig    v-if="activeTab === 'broker'" />
         <SparkplugCfg    v-if="activeTab === 'sparkplug'" />
         <OutstationsConfig v-if="activeTab === 'outstations'" />
@@ -161,6 +162,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
 import { api } from '@/api/client'
 import Dashboard     from '@/components/Dashboard.vue'
+import LiveValues    from '@/components/LiveValues.vue'
 import BrokerConfig  from '@/components/BrokerConfig.vue'
 import SparkplugCfg  from '@/components/SparkplugConfig.vue'
 import OutstationsConfig from '@/components/OutstationsConfig.vue'
@@ -170,6 +172,7 @@ import QuickConfig   from '@/components/QuickConfig.vue'
 
 // ── Inline SVG icon components ──────────────────────────────────
 const IconGauge  = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10"/><path d="m12 12-3-5"/><circle cx="12" cy="12" r="1.5"/></svg>' }
+const IconLive   = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>' }
 const IconWifi   = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/></svg>' }
 const IconSpark  = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>' }
 const IconDevice = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="1"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><circle cx="12" cy="17" r="1"/></svg>' }
@@ -180,6 +183,7 @@ const store = useGatewayStore()
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: IconGauge  },
+  { id: 'live',      label: 'Live Values', icon: IconLive },
   { id: 'broker',    label: 'Broker',    icon: IconWifi   },
   { id: 'sparkplug', label: 'Sparkplug', icon: IconSpark  },
   { id: 'outstations', label: 'Outstations', icon: IconDevice },
