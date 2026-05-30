@@ -82,17 +82,18 @@ const (
 )
 
 // OutstationStatus is reported by the master per association.
+// JSON tags must match web/src/api/client.ts OutstationStatus interface.
 type OutstationStatus struct {
-	ID              string
-	Label           string
-	Addr            string
-	Connected       bool
-	LastError       string
-	MeasurementsRx  int64
-	IntegrityPolls  int64
-	ClassPolls      int64
-	UnsolicitedRsps int64
-	LastReadAt      time.Time
+	ID              string    `json:"id"`
+	Label           string    `json:"label"`
+	Addr            string    `json:"addr"`
+	Connected       bool      `json:"connected"`
+	LastError       string    `json:"lastError"`
+	MeasurementsRx  int64     `json:"measurementsRx"`
+	IntegrityPolls  int64     `json:"integrityPolls"`
+	ClassPolls      int64     `json:"classPolls"`
+	UnsolicitedRsps int64     `json:"unsolicitedRsps"`
+	LastReadAt      time.Time `json:"lastReadAt"`
 }
 
 // Handler is implemented by the publisher to receive measurements and
