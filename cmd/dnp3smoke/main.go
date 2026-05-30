@@ -26,11 +26,12 @@ import (
 
 	"goMqttDnp3/config"
 	"goMqttDnp3/dnp3"
+	"goMqttDnp3/source"
 )
 
 type recorder struct {
 	mu        sync.Mutex
-	byType    map[dnp3.PointType]int
+	byType    map[source.PointType]int
 	total     int
 	events    int
 	static    int
@@ -39,10 +40,10 @@ type recorder struct {
 }
 
 func newRecorder() *recorder {
-	return &recorder{byType: make(map[dnp3.PointType]int)}
+	return &recorder{byType: make(map[source.PointType]int)}
 }
 
-func (r *recorder) OnMeasurement(m dnp3.Measurement) {
+func (r *recorder) OnSample(m source.Sample) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.byType[m.PointType]++
@@ -62,7 +63,7 @@ func (r *recorder) OnMeasurement(m dnp3.Measurement) {
 	}
 }
 
-func (r *recorder) OnStatusChange(s dnp3.OutstationStatus) {
+func (r *recorder) OnStatusChange(s source.Status) {
 	r.mu.Lock()
 	if s.Connected {
 		r.connected = true
@@ -75,17 +76,17 @@ func (r *recorder) OnLog(level, msg string) {
 	log.Printf("[lib:%s] %s", level, msg)
 }
 
-func valueStr(m dnp3.Measurement) string {
+func valueStr(m source.Sample) string {
 	switch m.PointType {
-	case dnp3.PointBinary, dnp3.PointBinaryOutputStatus:
+	case source.PointBinary, source.PointBinaryOutputStatus:
 		return fmt.Sprintf("val=%v", m.BoolValue)
-	case dnp3.PointDoubleBitBinary:
+	case source.PointDoubleBitBinary:
 		return fmt.Sprintf("val=%d", m.DBBValue)
-	case dnp3.PointCounter, dnp3.PointFrozenCounter:
+	case source.PointCounter, source.PointFrozenCounter:
 		return fmt.Sprintf("val=%d", m.UintValue)
-	case dnp3.PointAnalog, dnp3.PointAnalogOutputStatus:
+	case source.PointAnalog, source.PointAnalogOutputStatus:
 		return fmt.Sprintf("val=%g", m.FloatValue)
-	case dnp3.PointOctetString:
+	case source.PointOctetString:
 		return fmt.Sprintf("val=%x", m.BytesValue)
 	}
 	return ""
@@ -151,7 +152,7 @@ func main() {
 	}
 	sort.Strings(types)
 	for _, t := range types {
-		fmt.Printf("  %-22s %d\n", t, rec.byType[dnp3.PointType(t)])
+		fmt.Printf("  %-22s %d\n", t, rec.byType[source.PointType(t)])
 	}
 	if len(rec.samples) > 0 {
 		fmt.Println("sample measurements:")

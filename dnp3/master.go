@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"goMqttDnp3/config"
+	"goMqttDnp3/source"
 )
 
 // Master abstracts the DNP3 master runtime.
@@ -33,15 +34,18 @@ type Master interface {
 	Stop()
 
 	// Status returns the current per-outstation status snapshot.
-	Status() []OutstationStatus
+	Status() []source.Status
 
 	// IntegrityPoll triggers an on-demand integrity poll for one outstation.
-	// Returns immediately; the response arrives via Handler.OnMeasurement.
+	// Returns immediately; the response arrives via source.Handler.OnSample.
 	IntegrityPoll(outstationID string) error
 }
 
+// Master is a source.Source plus DNP3-specific outstation management.
+var _ source.Source = (Master)(nil)
+
 // New constructs a Master. The concrete type is selected by build tag.
 // See newMaster in master_{stub,ffi}.go.
-func New(h Handler) Master {
+func New(h source.Handler) Master {
 	return newMaster(h)
 }

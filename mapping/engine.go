@@ -6,7 +6,7 @@ import (
 	"math"
 
 	"goMqttDnp3/config"
-	"goMqttDnp3/dnp3"
+	"goMqttDnp3/source"
 	"goMqttDnp3/sparkplug"
 )
 
@@ -22,7 +22,7 @@ type Result struct {
 //
 // Sparkplug timestamps are taken from the measurement (the outstation's clock,
 // already plausibility-checked by the master), not from the gateway clock.
-func Apply(sig config.SignalMapping, m dnp3.Measurement) (Result, error) {
+func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 	if string(m.PointType) != sig.PointType {
 		return Result{}, fmt.Errorf("mapping %q: point type mismatch (mapping=%s, measurement=%s)",
 			sig.MetricName, sig.PointType, m.PointType)
@@ -37,7 +37,7 @@ func Apply(sig config.SignalMapping, m dnp3.Measurement) (Result, error) {
 	var value float64 = math.NaN()
 
 	switch m.PointType {
-	case dnp3.PointBinary, dnp3.PointBinaryOutputStatus:
+	case source.PointBinary, source.PointBinaryOutputStatus:
 		metric = sparkplug.MetricBool(sig.MetricName, tsMs, m.BoolValue)
 		if m.BoolValue {
 			value = 1
@@ -45,12 +45,12 @@ func Apply(sig config.SignalMapping, m dnp3.Measurement) (Result, error) {
 			value = 0
 		}
 
-	case dnp3.PointDoubleBitBinary:
+	case source.PointDoubleBitBinary:
 		v := uint32(m.DBBValue)
 		metric = sparkplug.MetricUInt32(sig.MetricName, tsMs, v)
 		value = float64(v)
 
-	case dnp3.PointCounter, dnp3.PointFrozenCounter:
+	case source.PointCounter, source.PointFrozenCounter:
 		eng := float64(m.UintValue)*scale + sig.Offset
 		if scale == 1.0 && sig.Offset == 0 {
 			metric = sparkplug.MetricUInt32(sig.MetricName, tsMs, m.UintValue)
@@ -59,12 +59,12 @@ func Apply(sig config.SignalMapping, m dnp3.Measurement) (Result, error) {
 		}
 		value = eng
 
-	case dnp3.PointAnalog, dnp3.PointAnalogOutputStatus:
+	case source.PointAnalog, source.PointAnalogOutputStatus:
 		eng := m.FloatValue*scale + sig.Offset
 		metric = sparkplug.MetricDouble(sig.MetricName, tsMs, eng)
 		value = eng
 
-	case dnp3.PointOctetString:
+	case source.PointOctetString:
 		metric = sparkplug.MetricString(sig.MetricName, tsMs, string(m.BytesValue))
 
 	default:
@@ -77,7 +77,7 @@ func Apply(sig config.SignalMapping, m dnp3.Measurement) (Result, error) {
 
 // qualityProperties packs DNP3 flags into a Sparkplug PropertySet so the
 // receiving SCADA can interpret point quality without out-of-band knowledge.
-func qualityProperties(q dnp3.Quality, engUnit string) *sparkplug.PropertySet {
+func qualityProperties(q source.Quality, engUnit string) *sparkplug.PropertySet {
 	ps := &sparkplug.PropertySet{}
 	addUint := func(k string, v uint32) {
 		val := v
@@ -103,9 +103,9 @@ func qualityProperties(q dnp3.Quality, engUnit string) *sparkplug.PropertySet {
 
 	addUint("quality", sparkplugQuality(q))
 	addUint("dnp3.flags", uint32(q))
-	addBool("dnp3.online", q&dnp3.QualityOnline != 0)
-	addBool("dnp3.restart", q&dnp3.QualityRestart != 0)
-	addBool("dnp3.comm_lost", q&dnp3.QualityCommLost != 0)
+	addBool("dnp3.online", q&source.QualityOnline != 0)
+	addBool("dnp3.restart", q&source.QualityRestart != 0)
+	addBool("dnp3.comm_lost", q&source.QualityCommLost != 0)
 	if engUnit != "" {
 		addStr("engUnit", engUnit)
 	}
@@ -114,11 +114,11 @@ func qualityProperties(q dnp3.Quality, engUnit string) *sparkplug.PropertySet {
 
 // sparkplugQuality maps DNP3 flags to the SCADA quality convention used by
 // Sparkplug receivers (192 = GOOD, 64 = STALE, 0 = BAD).
-func sparkplugQuality(q dnp3.Quality) uint32 {
+func sparkplugQuality(q source.Quality) uint32 {
 	if q.Good() {
 		return 192
 	}
-	if q&dnp3.QualityOnline != 0 {
+	if q&source.QualityOnline != 0 {
 		return 64
 	}
 	return 0

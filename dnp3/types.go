@@ -1,4 +1,8 @@
-// Package dnp3 is the gateway-facing abstraction over a DNP3 master.
+// Package dnp3 is a DNP3-master Source for the gateway.
+//
+// It implements the protocol-agnostic source.Source / source.Handler contract
+// (see package source); the gateway-facing measurement, quality, and status
+// types live there so other protocols (e.g. Modbus) share them.
 //
 // Two implementations are provided via build tags:
 //
@@ -13,99 +17,3 @@
 //
 // Build the real binding with: go build -tags dnp3_ffi
 package dnp3
-
-import "time"
-
-// PointType enumerates the DNP3 static object types this gateway exposes.
-// Each one maps to one or more (Group, Variation) pairs in IEEE 1815.
-type PointType string
-
-const (
-	PointBinary             PointType = "binary"               // g1 / g2 events
-	PointDoubleBitBinary    PointType = "double_bit_binary"    // g3 / g4 events
-	PointBinaryOutputStatus PointType = "binary_output_status" // g10 / g11 events
-	PointCounter            PointType = "counter"              // g20 / g22 events
-	PointFrozenCounter      PointType = "frozen_counter"       // g21 / g23 events
-	PointAnalog             PointType = "analog"               // g30 / g32 events
-	PointAnalogOutputStatus PointType = "analog_output_status" // g40 / g42 events
-	PointOctetString        PointType = "octet_string"         // g110 / g111 events
-)
-
-// Quality is the DNP3 flag bitfield reported per measurement (IEEE 1815 §A.4).
-// The bits vary slightly per point type; we preserve the raw byte and expose
-// helper accessors for the bits that are common across most types.
-type Quality uint8
-
-const (
-	QualityOnline       Quality = 1 << 0
-	QualityRestart      Quality = 1 << 1
-	QualityCommLost     Quality = 1 << 2
-	QualityRemoteForced Quality = 1 << 3
-	QualityLocalForced  Quality = 1 << 4
-	QualityOverRange    Quality = 1 << 5 // analog only
-	QualityRefError     Quality = 1 << 6 // analog only
-	QualityChatter      Quality = 1 << 5 // binary only (alias of OverRange bit)
-)
-
-// Good reports whether the flags indicate a usable measurement
-// (online and not restart/comm-lost).
-func (q Quality) Good() bool {
-	return q&QualityOnline != 0 &&
-		q&QualityRestart == 0 &&
-		q&QualityCommLost == 0
-}
-
-// Measurement is a single point update delivered by the master to the gateway.
-// The lib normalizes group/variation differences into a typed value.
-type Measurement struct {
-	OutstationID string    // gateway-side ID (config.DNP3Outstation.ID)
-	PointType    PointType
-	Index        uint16
-	Time         time.Time // measurement timestamp from outstation (or time.Now if absent)
-	Quality      Quality
-
-	// IsEvent is true when the value arrived as a DNP3 event variation (g2/g4/g22/…)
-	// rather than a static/poll response. Lets the publisher honor
-	// SignalMapping.PublishOnPoll (publish events always, static reads only when asked).
-	IsEvent bool
-
-	// Exactly one of the following carries the value, per PointType.
-	BoolValue   bool
-	DBBValue    DoubleBitState // double-bit binary
-	UintValue   uint32         // counter / frozen counter
-	FloatValue  float64        // analog / analog output status
-	BytesValue  []byte         // octet string
-}
-
-// DoubleBitState encodes the DNP3 g3/g4 double-bit binary state.
-type DoubleBitState uint8
-
-const (
-	DBBIntermediate DoubleBitState = 0
-	DBBOff          DoubleBitState = 1
-	DBBOn           DoubleBitState = 2
-	DBBIndeterm     DoubleBitState = 3
-)
-
-// OutstationStatus is reported by the master per association.
-// JSON tags must match web/src/api/client.ts OutstationStatus interface.
-type OutstationStatus struct {
-	ID              string    `json:"id"`
-	Label           string    `json:"label"`
-	Addr            string    `json:"addr"`
-	Connected       bool      `json:"connected"`
-	LastError       string    `json:"lastError"`
-	MeasurementsRx  int64     `json:"measurementsRx"`
-	IntegrityPolls  int64     `json:"integrityPolls"`
-	ClassPolls      int64     `json:"classPolls"`
-	UnsolicitedRsps int64     `json:"unsolicitedRsps"`
-	LastReadAt      time.Time `json:"lastReadAt"`
-}
-
-// Handler is implemented by the publisher to receive measurements and
-// status changes from the master.
-type Handler interface {
-	OnMeasurement(m Measurement)
-	OnStatusChange(s OutstationStatus)
-	OnLog(level, msg string)
-}

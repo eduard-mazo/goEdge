@@ -79,11 +79,12 @@ import (
 	"unsafe"
 
 	"goMqttDnp3/config"
+	"goMqttDnp3/source"
 )
 
 // ffiMaster is the opendnp3-backed Master.
 type ffiMaster struct {
-	h Handler
+	h source.Handler
 
 	manager *C.odc_manager
 	mgrOnce sync.Once
@@ -108,7 +109,7 @@ type assocCtx struct {
 	handle cgo.Handle
 
 	statusMu sync.RWMutex
-	status   OutstationStatus // mirrored from callbacks; read by Status()
+	status   source.Status // mirrored from callbacks; read by Status()
 }
 
 // staticVariation is one (group, variation) "all objects" read used for static
@@ -126,7 +127,7 @@ var staticVariations = []staticVariation{
 	{40, 1},  // analog output status 32-bit with flag
 }
 
-func newMaster(h Handler) Master {
+func newMaster(h source.Handler) Master {
 	return &ffiMaster{
 		h:      h,
 		assocs: make(map[string]*assocCtx),
@@ -171,7 +172,7 @@ func (m *ffiMaster) AddOutstation(o config.DNP3Outstation) error {
 		return fmt.Errorf("opendnp3: outstation %q already added", o.ID)
 	}
 	ctx := &assocCtx{outstationID: o.ID, master: m, cfg: o}
-	ctx.status = OutstationStatus{ID: o.ID, Label: o.Label, Addr: o.Addr()}
+	ctx.status = source.Status{ID: o.ID, Label: o.Label, Addr: o.Addr()}
 	ctx.handle = cgo.NewHandle(ctx)
 	m.assocs[o.ID] = ctx
 	return nil
@@ -349,10 +350,10 @@ func (m *ffiMaster) Stop() {
 	m.mu.Unlock()
 }
 
-func (m *ffiMaster) Status() []OutstationStatus {
+func (m *ffiMaster) Status() []source.Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]OutstationStatus, 0, len(m.assocs))
+	out := make([]source.Status, 0, len(m.assocs))
 	for _, ctx := range m.assocs {
 		ctx.statusMu.RLock()
 		out = append(out, ctx.status)
@@ -400,8 +401,8 @@ func boolCInt(b bool) C.int {
 	return 0
 }
 
-// makeMeasurement builds the gateway-facing Measurement from raw callback fields.
-func makeMeasurement(ctx *assocCtx, pt PointType, idx uint16, flags uint8, tsMs uint64, tq int, rt int) Measurement {
+// makeSample builds the gateway-facing source.Sample from raw callback fields.
+func makeSample(ctx *assocCtx, pt source.PointType, idx uint16, flags uint8, tsMs uint64, tq int, rt int) source.Sample {
 	var t time.Time
 	// opendnp3 TimestampQuality: 0=INVALID, 1=SYNCHRONIZED, 2=UNSYNCHRONIZED.
 	// On INVALID the value carries no usable timestamp; fall back to local now.
@@ -410,13 +411,13 @@ func makeMeasurement(ctx *assocCtx, pt PointType, idx uint16, flags uint8, tsMs 
 	} else {
 		t = time.UnixMilli(int64(tsMs))
 	}
-	return Measurement{
-		OutstationID: ctx.outstationID,
-		PointType:    pt,
-		Index:        idx,
-		Time:         t,
-		Quality:      Quality(flags),
-		IsEvent:      rt == 1, // shim read_type: 1=event variation, 0=static/response
+	return source.Sample{
+		SourceID:  ctx.outstationID,
+		PointType: pt,
+		Index:     idx,
+		Time:      t,
+		Quality:   source.Quality(flags),
+		IsEvent:   rt == 1, // shim read_type: 1=event variation, 0=static/response
 	}
 }
 
@@ -432,13 +433,13 @@ func ctxFrom(p unsafe.Pointer) (ctx *assocCtx) {
 	return
 }
 
-func deliver(ctx *assocCtx, m Measurement) {
+func deliver(ctx *assocCtx, m source.Sample) {
 	ctx.statusMu.Lock()
 	ctx.status.MeasurementsRx++
 	ctx.status.LastReadAt = time.Now()
 	ctx.statusMu.Unlock()
 	if ctx.master.h != nil {
-		ctx.master.h.OnMeasurement(m)
+		ctx.master.h.OnSample(m)
 	}
 }
 
@@ -476,7 +477,7 @@ func goOdcBinary(p unsafe.Pointer, index C.uint16_t, value C.int, flags C.uint8_
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointBinary, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
+	m := makeSample(ctx, source.PointBinary, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
 	m.BoolValue = value != 0
 	deliver(ctx, m)
 }
@@ -487,8 +488,8 @@ func goOdcDoubleBit(p unsafe.Pointer, index C.uint16_t, value C.int, flags C.uin
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointDoubleBitBinary, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
-	m.DBBValue = DoubleBitState(value)
+	m := makeSample(ctx, source.PointDoubleBitBinary, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
+	m.DBBValue = source.DoubleBitState(value)
 	deliver(ctx, m)
 }
 
@@ -498,7 +499,7 @@ func goOdcBinaryOutputStatus(p unsafe.Pointer, index C.uint16_t, value C.int, fl
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointBinaryOutputStatus, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
+	m := makeSample(ctx, source.PointBinaryOutputStatus, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
 	m.BoolValue = value != 0
 	deliver(ctx, m)
 }
@@ -509,7 +510,7 @@ func goOdcCounter(p unsafe.Pointer, index C.uint16_t, value C.uint32_t, flags C.
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointCounter, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
+	m := makeSample(ctx, source.PointCounter, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
 	m.UintValue = uint32(value)
 	deliver(ctx, m)
 }
@@ -520,7 +521,7 @@ func goOdcFrozenCounter(p unsafe.Pointer, index C.uint16_t, value C.uint32_t, fl
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointFrozenCounter, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
+	m := makeSample(ctx, source.PointFrozenCounter, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
 	m.UintValue = uint32(value)
 	deliver(ctx, m)
 }
@@ -531,7 +532,7 @@ func goOdcAnalog(p unsafe.Pointer, index C.uint16_t, value C.double, flags C.uin
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointAnalog, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
+	m := makeSample(ctx, source.PointAnalog, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
 	m.FloatValue = float64(value)
 	deliver(ctx, m)
 }
@@ -542,7 +543,7 @@ func goOdcAnalogOutputStatus(p unsafe.Pointer, index C.uint16_t, value C.double,
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointAnalogOutputStatus, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
+	m := makeSample(ctx, source.PointAnalogOutputStatus, uint16(index), uint8(flags), uint64(ts), int(tq), int(rt))
 	m.FloatValue = float64(value)
 	deliver(ctx, m)
 }
@@ -553,7 +554,7 @@ func goOdcOctetString(p unsafe.Pointer, index C.uint16_t, data *C.uint8_t, lengt
 	if ctx == nil {
 		return
 	}
-	m := makeMeasurement(ctx, PointOctetString, uint16(index), 0, uint64(time.Now().UnixMilli()), 1, int(rt))
+	m := makeSample(ctx, source.PointOctetString, uint16(index), 0, uint64(time.Now().UnixMilli()), 1, int(rt))
 	if length > 0 {
 		m.BytesValue = C.GoBytes(unsafe.Pointer(data), C.int(length))
 	}

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"goMqttDnp3/config"
+	"goMqttDnp3/source"
 )
 
 // stubMaster is the default no-op implementation. It tracks registered
@@ -15,12 +16,12 @@ import (
 // Lets the rest of the gateway (UI, API, MQTT, Sparkplug) be built, run, and
 // exercised end-to-end before the CGO binding is in place.
 type stubMaster struct {
-	h  Handler
+	h  source.Handler
 	mu sync.Mutex
 	os map[string]config.DNP3Outstation
 }
 
-func newMaster(h Handler) Master {
+func newMaster(h source.Handler) Master {
 	return &stubMaster{
 		h:  h,
 		os: make(map[string]config.DNP3Outstation),
@@ -50,12 +51,12 @@ func (m *stubMaster) Start(_ context.Context) error {
 
 func (m *stubMaster) Stop() {}
 
-func (m *stubMaster) Status() []OutstationStatus {
+func (m *stubMaster) Status() []source.Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]OutstationStatus, 0, len(m.os))
+	out := make([]source.Status, 0, len(m.os))
 	for _, o := range m.os {
-		out = append(out, OutstationStatus{
+		out = append(out, source.Status{
 			ID:        o.ID,
 			Label:     o.Label,
 			Addr:      o.Addr(),

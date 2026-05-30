@@ -32,6 +32,7 @@ import (
 	"goMqttDnp3/config"
 	"goMqttDnp3/dnp3"
 	"goMqttDnp3/mapping"
+	"goMqttDnp3/source"
 	"goMqttDnp3/sparkplug"
 )
 
@@ -40,7 +41,7 @@ type Status struct {
 	Running       bool                             `json:"running"`
 	MQTTConnected bool                             `json:"mqttConnected"`
 	BdSeq         uint64                           `json:"bdSeq"`
-	Outstations   map[string]dnp3.OutstationStatus `json:"outstations"`
+	Outstations   map[string]source.Status         `json:"outstations"`
 	PublishCount  int64                            `json:"publishCount"`
 	ErrorCount    int64                            `json:"errorCount"`
 	DroppedCount  int64                            `json:"droppedCount"` // samples shed when the ingest queue was full
@@ -73,7 +74,7 @@ type Publisher struct {
 	// pollers) from the MQTT publish path: a slow or blocked broker must never
 	// back-pressure the protocol stack. OnSample does a non-blocking enqueue;
 	// ingestLoop drains it on its own goroutine.
-	ingest chan dnp3.Measurement
+	ingest chan source.Sample
 
 	// last published value per metric (for deadband)
 	lastMu  sync.RWMutex
@@ -86,7 +87,7 @@ type Publisher struct {
 
 	// observed outstation status (mirrored from master)
 	statusMu sync.RWMutex
-	osStatus map[string]dnp3.OutstationStatus
+	osStatus map[string]source.Status
 
 	// live status push (optional; set before Start)
 	OnStatus func(Status)
@@ -108,7 +109,7 @@ func New(cfg config.AppConfig) *Publisher {
 		store:    cfg,
 		lastVal:  make(map[string]float64),
 		mapIdx:   make(map[string][]config.SignalMapping),
-		osStatus: make(map[string]dnp3.OutstationStatus),
+		osStatus: make(map[string]source.Status),
 		bufMax:   500,
 	}
 	for _, sig := range cfg.Mappings {
@@ -191,7 +192,7 @@ func (p *Publisher) Start(ctx context.Context) error {
 	// Start the ingest worker BEFORE the master: startup integrity responses are
 	// delivered synchronously during master.Start, so the queue must already be
 	// draining or those callbacks would block a protocol thread.
-	p.ingest = make(chan dnp3.Measurement, ingestQueueSize)
+	p.ingest = make(chan source.Sample, ingestQueueSize)
 	p.wg.Add(1)
 	go p.ingestLoop()
 
@@ -240,7 +241,7 @@ func (p *Publisher) Status() Status {
 		PublishCount: p.publishCount.Load(),
 		ErrorCount:   p.errorCount.Load(),
 		DroppedCount: p.droppedCount.Load(),
-		Outstations:  make(map[string]dnp3.OutstationStatus),
+		Outstations:  make(map[string]source.Status),
 		LastReadings: make(map[string]float64),
 	}
 	if p.client != nil {
@@ -284,14 +285,14 @@ func (p *Publisher) Status() Status {
 	return s
 }
 
-// --- dnp3.Handler ---
+// --- source.Handler ---
 
-// OnMeasurement is called by the DNP3 master for every point update (event or
-// integrity response) from an opendnp3 thread. It must not block: it does a
-// non-blocking handoff to the ingest queue and returns immediately. If the queue
-// is full (publish path wedged), the sample is shed and counted rather than
-// stalling the protocol stack.
-func (p *Publisher) OnMeasurement(m dnp3.Measurement) {
+// OnSample is called by a Source (DNP3 master, Modbus poller, …) for every point
+// update from a protocol thread. It must not block: it does a non-blocking
+// handoff to the ingest queue and returns immediately. If the queue is full
+// (publish path wedged), the sample is shed and counted rather than stalling the
+// protocol stack.
+func (p *Publisher) OnSample(m source.Sample) {
 	select {
 	case p.ingest <- m:
 	default:
@@ -310,8 +311,8 @@ func (p *Publisher) ingestLoop() {
 
 // handleSample maps one measurement to its Sparkplug metric(s) and publishes
 // (or buffers) it. Runs only on the ingest goroutine.
-func (p *Publisher) handleSample(m dnp3.Measurement) {
-	sigs := p.mappingsFor(m.OutstationID)
+func (p *Publisher) handleSample(m source.Sample) {
+	sigs := p.mappingsFor(m.SourceID)
 	if len(sigs) == 0 {
 		return
 	}
@@ -341,7 +342,7 @@ func (p *Publisher) handleSample(m dnp3.Measurement) {
 }
 
 // OnStatusChange mirrors the master's per-outstation status into our snapshot.
-func (p *Publisher) OnStatusChange(s dnp3.OutstationStatus) {
+func (p *Publisher) OnStatusChange(s source.Status) {
 	p.statusMu.Lock()
 	p.osStatus[s.ID] = s
 	p.statusMu.Unlock()
