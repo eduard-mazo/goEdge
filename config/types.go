@@ -63,6 +63,21 @@ type DNP3Outstation struct {
 	DisableUnsolOnStartup bool `json:"disableUnsolOnStartup"` // DISABLE_UNSOLICITED before initial integrity poll
 	StartupIntegrity      bool `json:"startupIntegrity"`      // perform integrity poll on connect
 
+	// Startup-integrity class selection. If StartupIntegrity is true but every
+	// flag below is false, the lib treats it as "all classes" (DNP3 conformant default).
+	// Set IntegrityClass0=false to work around outstations that emit malformed
+	// objects (e.g. g50v4 with wrong qualifier) in class-0 responses.
+	IntegrityClass0 bool `json:"integrityClass0"`
+	IntegrityClass1 bool `json:"integrityClass1"`
+	IntegrityClass2 bool `json:"integrityClass2"`
+	IntegrityClass3 bool `json:"integrityClass3"`
+
+	// StaticPollMs enables periodic group-specific static reads (one per
+	// supported point type, "all objects" qualifier) at this period in ms.
+	// 0 = disabled. Use this with outstations that don't flag events on update
+	// (the data lives in static groups; class polls return empty).
+	StaticPollMs int `json:"staticPollMs"`
+
 	Enabled bool `json:"enabled"`
 }
 

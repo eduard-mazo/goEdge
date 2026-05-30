@@ -13,7 +13,7 @@ DNP3_ARM_DIR       := third_party/dnp3/$(DNP3_ARM_TRIPLE)
 IMAGE_ICR   ?= localhost/gomqttdnp3:icr323x
 TARBALL_ICR ?= goMqttDnp3-icr323x.tar
 
-.PHONY: build build-ffi build-ffi-icr \
+.PHONY: build build-ffi build-ffi-noembed build-ffi-icr \
         run run-ffi linux windows icr323x icr323x-ffi \
         ui-install ui-build ui-dev \
         web web-dev dev \
@@ -40,14 +40,23 @@ icr323x: ui-build
 
 # ── DNP3 FFI builds (require vendored libdnp3_ffi) ───────────────────
 
-# Host build with real DNP3 master.
-build-ffi: check-dnp3-host
+# Host build with real DNP3 master + embedded UI (so browsing / serves the SPA).
+# For dev with hot-reload, use `make build-ffi-noembed` alongside `make ui-dev`.
+build-ffi: check-dnp3-host ui-build
+	CGO_ENABLED=1 \
+	CGO_CFLAGS="-I$(CURDIR)/$(DNP3_HOST_DIR)/include" \
+	CGO_LDFLAGS="-L$(CURDIR)/$(DNP3_HOST_DIR)/lib -ldnp3_ffi -lpthread -ldl -lm -Wl,-rpath,$(CURDIR)/$(DNP3_HOST_DIR)/lib" \
+	go build -tags embed,dnp3_ffi -trimpath -o $(BINARY) .
+
+# Same as build-ffi but without the embed tag; serves no static files at /.
+# Use with `make ui-dev` (Vite on :5173 proxies API calls to :8080).
+build-ffi-noembed: check-dnp3-host
 	CGO_ENABLED=1 \
 	CGO_CFLAGS="-I$(CURDIR)/$(DNP3_HOST_DIR)/include" \
 	CGO_LDFLAGS="-L$(CURDIR)/$(DNP3_HOST_DIR)/lib -ldnp3_ffi -lpthread -ldl -lm -Wl,-rpath,$(CURDIR)/$(DNP3_HOST_DIR)/lib" \
 	go build -tags dnp3_ffi -trimpath -o $(BINARY) .
 
-run-ffi: ui-build build-ffi
+run-ffi: build-ffi
 	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG)
 
 # Cross-compile with real DNP3 master for ICR-323x. Static-links libdnp3_ffi.a.

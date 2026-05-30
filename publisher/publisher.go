@@ -212,9 +212,26 @@ func (p *Publisher) Status() Status {
 		s.Uptime = time.Since(p.startAt).Round(time.Second).String()
 	}
 
+	// Pull live per-outstation counters straight from the master so
+	// MeasurementsRx / LastReadAt reflect every callback, not only the ones
+	// that came alongside an OnStatusChange.
+	if p.master != nil {
+		for _, st := range p.master.Status() {
+			s.Outstations[st.ID] = st
+		}
+	}
+	// Overlay any extra fields the publisher cached via OnStatusChange
+	// (e.g. LastError that the master doesn't re-emit on every measurement).
 	p.statusMu.RLock()
 	for k, v := range p.osStatus {
-		s.Outstations[k] = v
+		if existing, ok := s.Outstations[k]; ok {
+			if v.LastError != "" && existing.LastError == "" {
+				existing.LastError = v.LastError
+				s.Outstations[k] = existing
+			}
+		} else {
+			s.Outstations[k] = v
+		}
 	}
 	p.statusMu.RUnlock()
 

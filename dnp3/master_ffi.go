@@ -257,22 +257,46 @@ static dnp3_runtime_config_t mk_runtime_config(uint16_t threads) {
     return c;
 }
 
-static dnp3_master_channel_config_t mk_master_channel_config(uint16_t addr, uint16_t tx, uint16_t rx) {
+static dnp3_master_channel_config_t mk_master_channel_config(uint16_t addr, uint16_t tx, uint16_t rx, _Bool verbose) {
     dnp3_master_channel_config_t c = dnp3_master_channel_config_init(addr);
     if (tx >= 249) c.tx_buffer_size = tx;
     if (rx >= 2048) c.rx_buffer_size = rx;
+    if (verbose) {
+        c.decode_level.application = DNP3_APP_DECODE_LEVEL_OBJECT_VALUES;
+        c.decode_level.transport   = DNP3_TRANSPORT_DECODE_LEVEL_HEADER;
+        c.decode_level.link        = DNP3_LINK_DECODE_LEVEL_HEADER;
+    }
     return c;
+}
+
+// --- global logger wiring ------------------------------------------------
+
+static void wrap_logger_on_message(dnp3_log_level_t level, const char* msg, void* ctx) {
+    (void)ctx;
+    goDnp3LibLog((int)level, (char*)msg);
+}
+
+static dnp3_param_error_t install_global_logger(void) {
+    dnp3_logging_config_t cfg = dnp3_logging_config_init();
+    cfg.level = DNP3_LOG_LEVEL_DEBUG;
+    cfg.print_level = true;
+    dnp3_logger_t l;
+    l.on_message = wrap_logger_on_message;
+    l.on_destroy = NULL;
+    l.ctx = NULL;
+    return dnp3_configure_logging(cfg, l);
 }
 
 static dnp3_association_config_t mk_association_config(
     _Bool en_c1, _Bool en_c2, _Bool en_c3,
     _Bool dis_c1, _Bool dis_c2, _Bool dis_c3,
+    _Bool integ_c0, _Bool integ_c1, _Bool integ_c2, _Bool integ_c3,
     uint64_t response_timeout_ms,
     uint64_t keep_alive_s)
 {
     dnp3_event_classes_t en  = dnp3_event_classes_init(en_c1, en_c2, en_c3);
     dnp3_event_classes_t dis = dnp3_event_classes_init(dis_c1, dis_c2, dis_c3);
-    dnp3_classes_t integrity = dnp3_classes_init(true, true, true, true);
+    dnp3_classes_t integrity = dnp3_classes_init(integ_c0, integ_c1, integ_c2, integ_c3);
     dnp3_event_classes_t event_scan = dnp3_event_classes_none();
     dnp3_association_config_t cfg = dnp3_association_config_init(dis, en, integrity, event_scan);
     cfg.response_timeout = response_timeout_ms;
@@ -292,6 +316,12 @@ static dnp3_request_t* mk_integrity_request(void) {
 static dnp3_request_t* mk_class_request(int class_num) {
     return dnp3_request_new_class(false, class_num == 1, class_num == 2, class_num == 3);
 }
+// Build an "all objects" read for a specific variation (group/variation static read).
+// Used to poll outstations that don't flag events; sidesteps the malformed
+// Group50 trailers some libraries append to class-0 responses.
+static dnp3_request_t* mk_all_objects_request(dnp3_variation_t variation) {
+    return dnp3_request_new_all_objects(variation);
+}
 */
 import "C"
 
@@ -299,6 +329,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime/cgo"
 	"sync"
 	"sync/atomic"
@@ -347,6 +378,8 @@ func newMaster(h Handler) Master {
 func (m *ffiMaster) ensureRuntime() error {
 	var firstErr error
 	m.rtOnce.Do(func() {
+		// Install lib-level logger once per process (returns error on second call).
+		_ = C.install_global_logger()
 		cfg := C.mk_runtime_config(0) // 0 = auto-size to CPU count
 		err := C.dnp3_runtime_create(cfg, &m.rt)
 		if err != C.DNP3_PARAM_ERROR_OK {
@@ -416,7 +449,7 @@ func (m *ffiMaster) bringUpLocked(ctx *assocCtx) error {
 	endpoints := C.dnp3_endpoint_list_create(cAddr)
 	defer C.dnp3_endpoint_list_destroy(endpoints)
 
-	chCfg := C.mk_master_channel_config(C.uint16_t(o.MasterAddress), 2048, 2048)
+	chCfg := C.mk_master_channel_config(C.uint16_t(o.MasterAddress), 2048, 2048, C.bool(true))
 	strategy := C.mk_connect_strategy()
 	listener := C.build_client_state_listener(C.uintptr_t(ctx.handle))
 
@@ -434,6 +467,15 @@ func (m *ffiMaster) bringUpLocked(ctx *assocCtx) error {
 	}
 	ctx.channel = channel
 
+	// Build startup integrity class mask. If none set explicitly we keep the
+	// DNP3 default (all classes); otherwise honor exactly what the user picked.
+	integ0, integ1, integ2, integ3 := o.IntegrityClass0, o.IntegrityClass1, o.IntegrityClass2, o.IntegrityClass3
+	if !o.StartupIntegrity {
+		integ0, integ1, integ2, integ3 = false, false, false, false
+	} else if !integ0 && !integ1 && !integ2 && !integ3 {
+		integ0, integ1, integ2, integ3 = true, true, true, true
+	}
+
 	// Build the association.
 	assocCfg := C.mk_association_config(
 		C.bool(o.UnsolicitedEnabled && o.UnsolicitedClass1),
@@ -442,6 +484,7 @@ func (m *ffiMaster) bringUpLocked(ctx *assocCtx) error {
 		C.bool(o.DisableUnsolOnStartup),
 		C.bool(o.DisableUnsolOnStartup),
 		C.bool(o.DisableUnsolOnStartup),
+		C.bool(integ0), C.bool(integ1), C.bool(integ2), C.bool(integ3),
 		C.uint64_t(defaultMs(o.ResponseTimeoutMs, 5000)),
 		C.uint64_t(defaultMs(o.KeepAliveMs, 60000)/1000),
 	)
@@ -480,6 +523,26 @@ func (m *ffiMaster) bringUpLocked(ctx *assocCtx) error {
 	if o.Class3ScanMs > 0 {
 		if err := m.addPoll(ctx, C.mk_class_request(3), o.Class3ScanMs); err != nil {
 			return fmt.Errorf("class3 poll: %w", err)
+		}
+	}
+
+	// Static (group-specific) polls. One all-objects read per supported point
+	// type. The "with flags" variation of each group is used so quality is
+	// reported per point.
+	if o.StaticPollMs > 0 {
+		variations := []C.dnp3_variation_t{
+			C.DNP3_VARIATION_GROUP1_VAR2,   // binary input with flags
+			C.DNP3_VARIATION_GROUP3_VAR2,   // double-bit binary with flags
+			C.DNP3_VARIATION_GROUP10_VAR2,  // binary output status with flags
+			C.DNP3_VARIATION_GROUP20_VAR1,  // counter 32-bit with flag
+			C.DNP3_VARIATION_GROUP21_VAR1,  // frozen counter 32-bit with flag
+			C.DNP3_VARIATION_GROUP30_VAR1,  // analog input 32-bit with flag
+			C.DNP3_VARIATION_GROUP40_VAR1,  // analog output status 32-bit with flag
+		}
+		for _, v := range variations {
+			if err := m.addPoll(ctx, C.mk_all_objects_request(v), o.StaticPollMs); err != nil {
+				return fmt.Errorf("static poll variation=%d: %w", int(v), err)
+			}
 		}
 	}
 
@@ -736,8 +799,14 @@ func goDnp3OctetString(handle C.uintptr_t, index C.uint16_t, data *C.uint8_t, le
 
 //export goDnp3LibLog
 func goDnp3LibLog(level C.int, msg *C.char) {
-	// Currently unused; logging is not subscribed. Reserved for future logger
-	// integration via dnp3_configure_logging.
-	_ = level
-	_ = msg
+	s := C.GoString(msg)
+	// dnp3_log_level_t: 0=ERROR 1=WARN 2=INFO 3=DEBUG 4=TRACE
+	switch level {
+	case 0:
+		slog.Error("dnp3-lib: " + s)
+	case 1:
+		slog.Warn("dnp3-lib: " + s)
+	default:
+		slog.Info("dnp3-lib: " + s)
+	}
 }
