@@ -1,6 +1,7 @@
 # Binaries
 /goMqttModbus
 /goMqttDnp3
+/goMqttDnp3-arm
 /gatewayIcr323x
 /gatewayWin
 *.exe
@@ -9,6 +10,7 @@
 
 # Runtime config (use configs/example.json as template)
 /config.json
+/config.*.json
 
 # Frontend build artifacts (embed_prod.go embeds from web/dist at build time)
 /web/dist/
@@ -18,14 +20,16 @@
 # Container artifacts
 *.tar
 
-# OS / editor
+# OS / editor / agent
 .DS_Store
 *.swp
 .idea/
 .vscode/
+.claude/
 
-# Vendored DNP3 shared libs (commit .a only for hermetic static builds)
-third_party/dnp3/**/*.so
-third_party/dnp3/**/*.so.*
-third_party/dnp3/**/*.dylib
-third_party/dnp3/**/*.dll
+# opendnp3 is vendored locally per build host via `make opendnp3-vendor[-arm]`
+# (fetches source, builds static libs + headers into third_party/opendnp3/).
+# It's large and fully reproducible from scripts/build-opendnp3.sh, so none of
+# it is committed — run the vendor target before an ffi build.
+/build/opendnp3/
+third_party/opendnp3/

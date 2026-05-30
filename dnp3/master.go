@@ -14,7 +14,7 @@ import (
 //
 // Implementations:
 //   - stubMaster in master_stub.go (default; no C deps)
-//   - ffiMaster in master_ffi.go  (build tag dnp3_ffi; wraps libdnp3_ffi)
+//   - ffiMaster in master_ffi.go  (build tag dnp3_ffi; wraps opendnp3)
 type Master interface {
 	// AddOutstation registers an outstation. Must be called before Start.
 	// Re-adding the same ID replaces the prior config.

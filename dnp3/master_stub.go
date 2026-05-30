@@ -43,7 +43,7 @@ func (m *stubMaster) RemoveOutstation(id string) error {
 
 func (m *stubMaster) Start(_ context.Context) error {
 	if m.h != nil {
-		m.h.OnLog("warn", "DNP3 master running in STUB mode — no measurements will be received. Build with -tags dnp3_ffi after vendoring libdnp3_ffi.")
+		m.h.OnLog("warn", "DNP3 master running in STUB mode — no measurements will be received. Build with -tags dnp3_ffi after running `make opendnp3-vendor`.")
 	}
 	return nil
 }
@@ -60,7 +60,7 @@ func (m *stubMaster) Status() []OutstationStatus {
 			Label:     o.Label,
 			Addr:      o.Addr(),
 			Connected: false,
-			LastError: "stub build (no libdnp3_ffi)",
+			LastError: "stub build (no DNP3 library)",
 		})
 	}
 	return out

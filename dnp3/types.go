@@ -3,12 +3,13 @@
 // Two implementations are provided via build tags:
 //
 //   - default ("dnp3_stub"): in-process stub that compiles without any C library.
-//     Lets the UI/API/build pipeline work end-to-end while libdnp3_ffi is being
-//     vendored. Emits no measurements; reports connected=false for all outstations.
+//     Lets the UI/API/build pipeline work end-to-end without the native stack.
+//     Emits no measurements; reports connected=false for all outstations.
 //
-//   - "dnp3_ffi": CGO binding to Step Function I/O libdnp3_ffi
-//     (https://github.com/stepfunc/dnp3). Vendor the C headers and static lib
-//     under third_party/dnp3/{triple}/ before building with this tag.
+//   - "dnp3_ffi": CGO binding to opendnp3 (Apache 2.0,
+//     https://github.com/dnp3/opendnp3) via the C++ shim in opendnp3_c.{h,cpp}.
+//     Vendor the static lib + headers under third_party/opendnp3/{triple}/ with
+//     `make opendnp3-vendor` before building with this tag.
 //
 // Build the real binding with: go build -tags dnp3_ffi
 package dnp3
@@ -62,6 +63,11 @@ type Measurement struct {
 	Index        uint16
 	Time         time.Time // measurement timestamp from outstation (or time.Now if absent)
 	Quality      Quality
+
+	// IsEvent is true when the value arrived as a DNP3 event variation (g2/g4/g22/…)
+	// rather than a static/poll response. Lets the publisher honor
+	// SignalMapping.PublishOnPoll (publish events always, static reads only when asked).
+	IsEvent bool
 
 	// Exactly one of the following carries the value, per PointType.
 	BoolValue   bool

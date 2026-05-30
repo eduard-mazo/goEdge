@@ -43,6 +43,7 @@ type Status struct {
 	Outstations   map[string]dnp3.OutstationStatus `json:"outstations"`
 	PublishCount  int64                            `json:"publishCount"`
 	ErrorCount    int64                            `json:"errorCount"`
+	DroppedCount  int64                            `json:"droppedCount"` // samples shed when the ingest queue was full
 	Uptime        string                           `json:"uptime"`
 	LastReadings  map[string]float64               `json:"lastReadings"`
 }
@@ -66,6 +67,13 @@ type Publisher struct {
 
 	publishCount atomic.Int64
 	errorCount   atomic.Int64
+	droppedCount atomic.Int64
+
+	// ingest decouples protocol callback threads (opendnp3 strands / Modbus
+	// pollers) from the MQTT publish path: a slow or blocked broker must never
+	// back-pressure the protocol stack. OnSample does a non-blocking enqueue;
+	// ingestLoop drains it on its own goroutine.
+	ingest chan dnp3.Measurement
 
 	// last published value per metric (for deadband)
 	lastMu  sync.RWMutex
@@ -89,6 +97,10 @@ type bufferedMsg struct {
 	deviceID string
 	metrics  []*sparkplug.Metric
 }
+
+// ingestQueueSize bounds the protocol→publish handoff. Sized generously so it
+// only sheds under sustained overload (which then shows up as Status.DroppedCount).
+const ingestQueueSize = 4096
 
 // New creates a Publisher from the current AppConfig.
 func New(cfg config.AppConfig) *Publisher {
@@ -176,7 +188,20 @@ func (p *Publisher) Start(ctx context.Context) error {
 	p.cancel = cancel
 	p.startAt = time.Now()
 
+	// Start the ingest worker BEFORE the master: startup integrity responses are
+	// delivered synchronously during master.Start, so the queue must already be
+	// draining or those callbacks would block a protocol thread.
+	p.ingest = make(chan dnp3.Measurement, ingestQueueSize)
+	p.wg.Add(1)
+	go p.ingestLoop()
+
 	if err := p.master.Start(pCtx); err != nil {
+		// Tear down anything Start brought up (thread pool, partially-added
+		// outstations) so a failed start doesn't orphan native resources.
+		p.master.Stop()
+		cancel()
+		close(p.ingest)
+		p.wg.Wait()
 		p.running.Store(false)
 		return fmt.Errorf("DNP3 master start: %w", err)
 	}
@@ -193,7 +218,10 @@ func (p *Publisher) Stop() {
 	if p.cancel != nil {
 		p.cancel()
 	}
+	// master.Stop() returns only once protocol callbacks have ceased, so no
+	// goroutine can send on ingest after this — safe to close and drain.
 	p.master.Stop()
+	close(p.ingest)
 	p.wg.Wait()
 	if p.client != nil && p.client.IsConnected() {
 		if err := p.node.PublishNDeath(p.client); err != nil {
@@ -211,6 +239,7 @@ func (p *Publisher) Status() Status {
 		Running:      p.running.Load(),
 		PublishCount: p.publishCount.Load(),
 		ErrorCount:   p.errorCount.Load(),
+		DroppedCount: p.droppedCount.Load(),
 		Outstations:  make(map[string]dnp3.OutstationStatus),
 		LastReadings: make(map[string]float64),
 	}
@@ -258,14 +287,41 @@ func (p *Publisher) Status() Status {
 // --- dnp3.Handler ---
 
 // OnMeasurement is called by the DNP3 master for every point update (event or
-// integrity response). Must return quickly; mapping + MQTT publish run inline.
+// integrity response) from an opendnp3 thread. It must not block: it does a
+// non-blocking handoff to the ingest queue and returns immediately. If the queue
+// is full (publish path wedged), the sample is shed and counted rather than
+// stalling the protocol stack.
 func (p *Publisher) OnMeasurement(m dnp3.Measurement) {
+	select {
+	case p.ingest <- m:
+	default:
+		p.droppedCount.Add(1)
+	}
+}
+
+// ingestLoop drains the queue on its own goroutine, doing mapping + deadband +
+// publish off the protocol threads. Exits when ingest is closed (Stop).
+func (p *Publisher) ingestLoop() {
+	defer p.wg.Done()
+	for m := range p.ingest {
+		p.handleSample(m)
+	}
+}
+
+// handleSample maps one measurement to its Sparkplug metric(s) and publishes
+// (or buffers) it. Runs only on the ingest goroutine.
+func (p *Publisher) handleSample(m dnp3.Measurement) {
 	sigs := p.mappingsFor(m.OutstationID)
 	if len(sigs) == 0 {
 		return
 	}
 	for _, sig := range sigs {
 		if sig.PointType != string(m.PointType) || sig.Index != m.Index {
+			continue
+		}
+		// By default publish only change events; static/poll responses (integrity
+		// and static polls) publish only when the mapping opts in via PublishOnPoll.
+		if !m.IsEvent && !sig.PublishOnPoll {
 			continue
 		}
 		result, err := mapping.Apply(sig, m)

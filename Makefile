@@ -3,11 +3,25 @@ CONFIG   ?= config.json
 PORT     ?= 8080
 LOG      ?= info
 
-# DNP3 native lib (Step Function I/O libdnp3_ffi) — vendored under third_party/dnp3/{triple}/
+# DNP3 native lib (opendnp3, Apache 2.0) — vendored under third_party/opendnp3/{triple}/
+# Built once per host with `make opendnp3-vendor[-arm]`. Static archive, so it
+# links into the Go binary; nothing extra to deploy on the target.
 DNP3_HOST_TRIPLE   ?= x86_64-unknown-linux-gnu
 DNP3_ARM_TRIPLE    ?= armv7-unknown-linux-gnueabihf
-DNP3_HOST_DIR      := third_party/dnp3/$(DNP3_HOST_TRIPLE)
-DNP3_ARM_DIR       := third_party/dnp3/$(DNP3_ARM_TRIPLE)
+DNP3_HOST_DIR      := third_party/opendnp3/$(DNP3_HOST_TRIPLE)
+DNP3_ARM_DIR       := third_party/opendnp3/$(DNP3_ARM_TRIPLE)
+
+# The C++ shim (dnp3/opendnp3_c.cpp) is compiled by cgo; it needs the opendnp3
+# headers (CXXFLAGS) and the static libs + their TLS/stdc++/pthread deps (LDFLAGS).
+DNP3_HOST_CXXFLAGS := -std=c++17 -I$(CURDIR)/$(DNP3_HOST_DIR)/include
+DNP3_HOST_LDFLAGS  := -L$(CURDIR)/$(DNP3_HOST_DIR)/lib -lopendnp3 -lssl -lcrypto -lstdc++ -lpthread -lm -ldl
+DNP3_ARM_CXXFLAGS  := -std=c++17 -I$(CURDIR)/$(DNP3_ARM_DIR)/include
+# The armv7 opendnp3 is vendored with DNP3_TLS=OFF (no armhf OpenSSL on the build
+# host), so it links no ssl/crypto. Force-static the C++ runtime via the literal
+# archive (-l:libstdc++.a) so the binary needs no libstdc++ on the device — a
+# plain -lstdc++ would pull the shared lib and defeat -static-libstdc++.
+# To enable secure DNP3 later: vendor with an armhf OpenSSL and add -lssl -lcrypto.
+DNP3_ARM_LDFLAGS   := -L$(CURDIR)/$(DNP3_ARM_DIR)/lib -lopendnp3 -l:libstdc++.a -lpthread -lm -ldl -static-libgcc
 
 # Container
 IMAGE_ICR   ?= localhost/gomqttdnp3:icr323x
@@ -19,6 +33,7 @@ TARBALL_ICR ?= goMqttDnp3-icr323x.tar
         web web-dev dev \
         image-icr323x image-save-icr323x \
         check-dnp3-host check-dnp3-arm check-arm-toolchain \
+        opendnp3-vendor opendnp3-vendor-arm \
         test clean
 
 # ── Stub builds (no DNP3 lib needed; emits no measurements) ──────────
@@ -38,39 +53,39 @@ icr323x: ui-build
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
 		go build -tags embed -trimpath -ldflags="-s -w" -o $(BINARY) .
 
-# ── DNP3 FFI builds (require vendored libdnp3_ffi) ───────────────────
+# ── DNP3 FFI builds (require vendored opendnp3; run make opendnp3-vendor) ──
 
 # Host build with real DNP3 master + embedded UI (so browsing / serves the SPA).
 # For dev with hot-reload, use `make build-ffi-noembed` alongside `make ui-dev`.
 build-ffi: check-dnp3-host ui-build
 	CGO_ENABLED=1 \
-	CGO_CFLAGS="-I$(CURDIR)/$(DNP3_HOST_DIR)/include" \
-	CGO_LDFLAGS="-L$(CURDIR)/$(DNP3_HOST_DIR)/lib -ldnp3_ffi -lpthread -ldl -lm -Wl,-rpath,$(CURDIR)/$(DNP3_HOST_DIR)/lib" \
+	CGO_CXXFLAGS="$(DNP3_HOST_CXXFLAGS)" \
+	CGO_LDFLAGS="$(DNP3_HOST_LDFLAGS)" \
 	go build -tags embed,dnp3_ffi -trimpath -o $(BINARY) .
 
 # Same as build-ffi but without the embed tag; serves no static files at /.
 # Use with `make ui-dev` (Vite on :5173 proxies API calls to :8080).
 build-ffi-noembed: check-dnp3-host
 	CGO_ENABLED=1 \
-	CGO_CFLAGS="-I$(CURDIR)/$(DNP3_HOST_DIR)/include" \
-	CGO_LDFLAGS="-L$(CURDIR)/$(DNP3_HOST_DIR)/lib -ldnp3_ffi -lpthread -ldl -lm -Wl,-rpath,$(CURDIR)/$(DNP3_HOST_DIR)/lib" \
+	CGO_CXXFLAGS="$(DNP3_HOST_CXXFLAGS)" \
+	CGO_LDFLAGS="$(DNP3_HOST_LDFLAGS)" \
 	go build -tags dnp3_ffi -trimpath -o $(BINARY) .
 
 run-ffi: build-ffi
 	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG)
 
-# Cross-compile with real DNP3 master for ICR-323x. Static-links libdnp3_ffi.a.
+# Cross-compile with real DNP3 master for ICR-323x. Static-links libopendnp3.a
+# (and libstdc++); the resulting binary is self-contained for DNP3.
 icr323x-ffi: check-dnp3-arm check-arm-toolchain ui-build
 	CGO_ENABLED=1 GOOS=linux GOARCH=arm GOARM=7 \
 	CC=arm-linux-gnueabihf-gcc \
-	CGO_CFLAGS="-I$(CURDIR)/$(DNP3_ARM_DIR)/include" \
-	CGO_LDFLAGS="-L$(CURDIR)/$(DNP3_ARM_DIR)/lib -ldnp3_ffi -lpthread -ldl -lm -Wl,-rpath,/usr/local/lib" \
+	CXX=arm-linux-gnueabihf-g++ \
+	CGO_CXXFLAGS="$(DNP3_ARM_CXXFLAGS)" \
+	CGO_LDFLAGS="$(DNP3_ARM_LDFLAGS)" \
 	go build -tags embed,dnp3_ffi -trimpath -ldflags="-s -w" -o $(BINARY) .
 	@echo ""
 	@echo "Deploy notes for $(BINARY) on ICR-3232:"
-	@echo "  scp $(BINARY)                                            root@ICR:/usr/local/bin/"
-	@echo "  scp $(DNP3_ARM_DIR)/lib/libdnp3_ffi.so                   root@ICR:/usr/local/lib/"
-	@echo "  ssh root@ICR 'ldconfig'   # refresh dynamic linker cache"
+	@echo "  scp $(BINARY)   root@ICR:/usr/local/bin/   # opendnp3 is static-linked; no .so needed"
 
 # Alias for consistency.
 build-ffi-icr: icr323x-ffi
@@ -116,16 +131,16 @@ image-save-icr323x: image-icr323x
 # ── Preflight checks ─────────────────────────────────────────────────
 
 check-dnp3-host:
-	@if [ ! -f $(DNP3_HOST_DIR)/include/dnp3.h ] || [ ! -f $(DNP3_HOST_DIR)/lib/libdnp3_ffi.so ]; then \
-		echo "ERROR: missing $(DNP3_HOST_DIR)/{include/dnp3.h,lib/libdnp3_ffi.so}"; \
-		echo "  Fetch from https://github.com/stepfunc/dnp3/releases (see README)."; \
+	@if [ ! -f $(DNP3_HOST_DIR)/include/opendnp3/DNP3Manager.h ] || [ ! -f $(DNP3_HOST_DIR)/lib/libopendnp3.a ]; then \
+		echo "ERROR: missing $(DNP3_HOST_DIR)/{include/opendnp3/DNP3Manager.h,lib/libopendnp3.a}"; \
+		echo "  Run: make opendnp3-vendor"; \
 		exit 1; \
 	fi
 
 check-dnp3-arm:
-	@if [ ! -f $(DNP3_ARM_DIR)/include/dnp3.h ] || [ ! -f $(DNP3_ARM_DIR)/lib/libdnp3_ffi.so ]; then \
-		echo "ERROR: missing $(DNP3_ARM_DIR)/{include/dnp3.h,lib/libdnp3_ffi.so}"; \
-		echo "  Fetch from https://github.com/stepfunc/dnp3/releases (see README)."; \
+	@if [ ! -f $(DNP3_ARM_DIR)/include/opendnp3/DNP3Manager.h ] || [ ! -f $(DNP3_ARM_DIR)/lib/libopendnp3.a ]; then \
+		echo "ERROR: missing $(DNP3_ARM_DIR)/{include/opendnp3/DNP3Manager.h,lib/libopendnp3.a}"; \
+		echo "  Run: make opendnp3-vendor-arm"; \
 		exit 1; \
 	fi
 
@@ -135,6 +150,23 @@ check-arm-toolchain:
 		echo "  Install on Debian/Ubuntu: sudo apt install gcc-arm-linux-gnueabihf"; \
 		exit 1; \
 	fi
+
+# ── opendnp3 vendoring (Apache 2.0 DNP3 stack) ──────────────────────
+#
+# Run once per build host. Fetches opendnp3 source, builds static libs, and
+# installs them under third_party/opendnp3/<triple>/. The CGO shim
+# (dnp3/opendnp3_c.cpp) links against these.
+#
+# Requires on host: cmake, build-essential, libssl-dev (apt install).
+# For ARMv7 cross: also gcc-arm-linux-gnueabihf + g++-arm-linux-gnueabihf,
+# and OPENSSL_ROOT_DIR pointing at a static armv7 OpenSSL build (or accept
+# the TLS-off fallback).
+
+opendnp3-vendor:
+	bash scripts/build-opendnp3.sh host
+
+opendnp3-vendor-arm:
+	bash scripts/build-opendnp3.sh armv7-linux
 
 # ── Clean ────────────────────────────────────────────────────────────
 
