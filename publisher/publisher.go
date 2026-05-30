@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -118,15 +119,26 @@ func (p *Publisher) Start(ctx context.Context) error {
 	sp := cfg.Sparkplug
 	mq := cfg.MQTT
 
+	// MQTT clientId must be unique on the broker — duplicates get kicked
+	// (mosquitto disconnects the older session). Append the PID so multiple
+	// gateways on the same broker coexist; PID is stable within a process
+	// lifetime, which Sparkplug needs for bdSeq continuity across reconnects.
+	clientID := fmt.Sprintf("%s-%d", mq.ClientID, os.Getpid())
+
 	p.node = sparkplug.NewNode(sp.GroupID, sp.NodeID)
-	opts := p.node.NewClientOptions(mq.Broker, mq.ClientID, mq.Username, mq.Password)
-	opts.SetAutoReconnect(false)
+	opts := p.node.NewClientOptions(mq.Broker, clientID, mq.Username, mq.Password)
+	// Auto-reconnect on broker drop. Without this, an MQTT blip strands the
+	// gateway with a live DNP3 master but no publish path; the offline buffer
+	// drains once MQTT comes back.
+	opts.SetAutoReconnect(true)
+	opts.SetConnectRetry(true)
+	opts.SetMaxReconnectInterval(30 * time.Second)
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
-		p.logInfo("MQTT connected to " + mq.Broker)
+		p.logInfo("MQTT connected to " + mq.Broker + " (clientId=" + clientID + ")")
 		p.drainBuffer()
 	})
 	opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
-		p.logWarn("MQTT connection lost: " + err.Error())
+		p.logWarn("MQTT connection lost: " + err.Error() + " (auto-reconnecting)")
 	})
 
 	client := mqtt.NewClient(opts)
