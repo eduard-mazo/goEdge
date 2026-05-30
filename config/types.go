@@ -1,11 +1,41 @@
 package config
 
 // AppConfig is the top-level persisted configuration.
+//
+// Sources are split by protocol: Outstations (DNP3) and ModbusDevices. Each
+// SignalMapping carries a Protocol discriminator and references its source by
+// SourceID; the publisher runs one source.Source per protocol and routes
+// samples to mappings by source ID.
 type AppConfig struct {
-	MQTT        MQTTConfig       `json:"mqtt"`
-	Sparkplug   SparkplugConfig  `json:"sparkplug"`
-	Outstations []DNP3Outstation `json:"outstations"`
-	Mappings    []SignalMapping  `json:"mappings"`
+	MQTT          MQTTConfig       `json:"mqtt"`
+	Sparkplug     SparkplugConfig  `json:"sparkplug"`
+	Outstations   []DNP3Outstation `json:"outstations"`
+	ModbusDevices []ModbusDevice   `json:"modbusDevices"`
+	Mappings      []SignalMapping  `json:"mappings"`
+}
+
+// ModbusDevice represents a Modbus/TCP slave reachable over the network.
+// One TCP connection per device; reads are serialized and polled on a ticker.
+type ModbusDevice struct {
+	ID           string `json:"id"`           // unique slug (user-defined)
+	Label        string `json:"label"`        // human-readable name
+	Host         string `json:"host"`
+	Port         int    `json:"port"`         // default 502
+	UnitID       uint8  `json:"unitId"`       // Modbus slave/unit id (typical 1)
+	ScanRateMs   int    `json:"scanRateMs"`   // poll cadence; default 1000
+	TimeoutMs    int    `json:"timeoutMs"`    // per-request timeout; default 3000
+	Retries      int    `json:"retries"`      // transient-error retries; default 2
+	RetryDelayMs int    `json:"retryDelayMs"` // delay between retries; default 500
+	Enabled      bool   `json:"enabled"`
+}
+
+// Addr returns "host:port" for the Modbus device.
+func (d ModbusDevice) Addr() string {
+	port := d.Port
+	if port == 0 {
+		port = 502
+	}
+	return d.Host + ":" + itoa(port)
 }
 
 // MQTTConfig holds broker connection parameters.
@@ -108,26 +138,56 @@ func itoa(n int) string {
 // DNP3 points are addressed by (Group, Variation, Index).
 // The library delivers typed measurements; no byte-order/scaling decoding is needed.
 type SignalMapping struct {
-	ID            string  `json:"id"`            // uuid
-	MetricName    string  `json:"metricName"`    // unique metric name
-	DeviceID      string  `json:"deviceId"`      // Sparkplug device ID; empty = node metric
-	OutstationID  string  `json:"outstationId"`  // ref to DNP3Outstation.ID
+	ID         string `json:"id"`         // uuid
+	MetricName string `json:"metricName"` // unique metric name
+	DeviceID   string `json:"deviceId"`   // Sparkplug device ID; empty = node metric
 
-	// DNP3 point identity.
-	PointType string `json:"pointType"` // binary|double_bit_binary|binary_output_status|counter|frozen_counter|analog|analog_output_status|octet_string
-	Index     uint16 `json:"index"`     // point index within its type
-	EventClass uint8 `json:"eventClass"` // 0=static-only, 1|2|3 = event class assignment (informational/UI; outstation configures this)
+	// Protocol selects how the source point is addressed: "dnp3" (default when
+	// empty) or "modbus".
+	Protocol string `json:"protocol"`
 
-	// Engineering value transform (kept for analog scaling at gateway side if outstation reports raw counts).
-	Scale           float64 `json:"scale"`           // multiplier; default 1.0
-	Offset          float64 `json:"offset"`          // addend after scale; default 0.0
+	// SourceID references the source this point belongs to (DNP3Outstation.ID or
+	// ModbusDevice.ID). OutstationID is the legacy DNP3-only alias; Src() resolves
+	// SourceID first, falling back to OutstationID for older configs.
+	SourceID     string `json:"sourceId"`
+	OutstationID string `json:"outstationId"`
+
+	// DNP3 point identity (Protocol=="dnp3").
+	PointType  string `json:"pointType"`  // binary|double_bit_binary|binary_output_status|counter|frozen_counter|analog|analog_output_status|octet_string
+	Index      uint16 `json:"index"`      // point index within its type
+	EventClass uint8  `json:"eventClass"` // 0=static-only, 1|2|3 = event class (informational/UI)
+
+	// Modbus point identity (Protocol=="modbus").
+	Function  string `json:"function"`  // coil|discrete_input|input_register|holding_register
+	Address   uint16 `json:"address"`   // register/coil start address
+	Quantity  uint16 `json:"quantity"`  // registers to read; 0 = derived from DataType
+	DataType  string `json:"dataType"`  // bool|int16|uint16|int32|uint32|float32|float64
+	ByteOrder string `json:"byteOrder"` // ABCD|DCBA|BADC|CDAB (word/byte order for 32/64-bit)
+
+	// Engineering value transform.
+	Scale           float64 `json:"scale"`  // multiplier; default 1.0
+	Offset          float64 `json:"offset"` // addend after scale; default 0.0
 	EngineeringUnit string  `json:"engineeringUnit"`
 
 	// Publish-time controls.
-	Deadband      float64 `json:"deadband"`      // min change to publish (post-scale); 0 = always publish on event
-	PublishOnPoll bool    `json:"publishOnPoll"` // also publish static reads (not only events)
+	Deadband      float64 `json:"deadband"`      // min change to publish (post-scale); 0 = always
+	PublishOnPoll bool    `json:"publishOnPoll"` // also publish static/poll reads (not only events)
 
 	Enabled bool `json:"enabled"`
+}
+
+// Src returns the source ID this mapping belongs to, preferring the neutral
+// SourceID and falling back to the legacy OutstationID.
+func (m SignalMapping) Src() string {
+	if m.SourceID != "" {
+		return m.SourceID
+	}
+	return m.OutstationID
+}
+
+// IsModbus reports whether this mapping addresses a Modbus point.
+func (m SignalMapping) IsModbus() bool {
+	return m.Protocol == "modbus"
 }
 
 // DefaultAppConfig returns a config with sane defaults.
@@ -143,7 +203,8 @@ func DefaultAppConfig() AppConfig {
 			GroupID: "plant-floor",
 			NodeID:  "dnp3-gw",
 		},
-		Outstations: []DNP3Outstation{},
-		Mappings:    []SignalMapping{},
+		Outstations:   []DNP3Outstation{},
+		ModbusDevices: []ModbusDevice{},
+		Mappings:      []SignalMapping{},
 	}
 }

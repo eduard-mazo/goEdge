@@ -32,6 +32,7 @@ import (
 	"goMqttDnp3/config"
 	"goMqttDnp3/dnp3"
 	"goMqttDnp3/mapping"
+	"goMqttDnp3/modbus"
 	"goMqttDnp3/source"
 	"goMqttDnp3/sparkplug"
 )
@@ -52,8 +53,15 @@ type Status struct {
 // Publisher manages the full lifecycle: MQTT connect → NBIRTH/DBIRTH → react to
 // measurements → NDATA/DDATA → NDEATH.
 type Publisher struct {
-	store  config.AppConfig
-	master dnp3.Master
+	store config.AppConfig
+
+	// Field-protocol sources, all feeding OnSample. master is kept typed for
+	// DNP3-specific ops (AddOutstation/IntegrityPoll); sources is the uniform
+	// list used for Start/Stop/Status.
+	master  dnp3.Master
+	modbus  *modbus.Poller
+	sources []source.Source
+
 	node   *sparkplug.Node
 	client mqtt.Client
 
@@ -116,10 +124,33 @@ func New(cfg config.AppConfig) *Publisher {
 		if !sig.Enabled {
 			continue
 		}
-		p.mapIdx[sig.OutstationID] = append(p.mapIdx[sig.OutstationID], sig)
+		sig = normalizeMapping(sig)
+		src := sig.Src()
+		p.mapIdx[src] = append(p.mapIdx[src], sig)
 	}
 	p.master = dnp3.New(p)
+	p.modbus = modbus.New(p)
+	p.sources = []source.Source{p.master, p.modbus}
 	return p
+}
+
+// normalizeMapping fills the routing fields (PointType/Index) for Modbus mappings
+// from their function/address so the publisher routes and maps them uniformly
+// with DNP3. Modbus reads are polls, so they always publish-on-poll (deadband
+// still applies); there is no event/static distinction.
+func normalizeMapping(sig config.SignalMapping) config.SignalMapping {
+	if !sig.IsModbus() {
+		return sig
+	}
+	switch sig.Function {
+	case "coil", "discrete_input":
+		sig.PointType = string(source.PointBinary)
+	default:
+		sig.PointType = string(source.PointAnalog)
+	}
+	sig.Index = sig.Address
+	sig.PublishOnPoll = true
+	return sig
 }
 
 // Start connects MQTT, sends NBIRTH/DBIRTHs, and starts the DNP3 master.
@@ -184,30 +215,44 @@ func (p *Publisher) Start(ctx context.Context) error {
 			p.logWarn(fmt.Sprintf("AddOutstation %s: %v", o.ID, err))
 		}
 	}
+	for _, d := range cfg.ModbusDevices {
+		if !d.Enabled {
+			continue
+		}
+		if err := p.modbus.AddDevice(d, cfg.Mappings); err != nil {
+			p.logWarn(fmt.Sprintf("AddDevice %s: %v", d.ID, err))
+		}
+	}
 
 	pCtx, cancel := context.WithCancel(ctx)
 	p.cancel = cancel
 	p.startAt = time.Now()
 
-	// Start the ingest worker BEFORE the master: startup integrity responses are
-	// delivered synchronously during master.Start, so the queue must already be
+	// Start the ingest worker BEFORE the sources: DNP3 startup integrity responses
+	// are delivered synchronously during Start, so the queue must already be
 	// draining or those callbacks would block a protocol thread.
 	p.ingest = make(chan source.Sample, ingestQueueSize)
 	p.wg.Add(1)
 	go p.ingestLoop()
 
-	if err := p.master.Start(pCtx); err != nil {
-		// Tear down anything Start brought up (thread pool, partially-added
-		// outstations) so a failed start doesn't orphan native resources.
-		p.master.Stop()
-		cancel()
-		close(p.ingest)
-		p.wg.Wait()
-		p.running.Store(false)
-		return fmt.Errorf("DNP3 master start: %w", err)
+	for _, s := range p.sources {
+		if err := s.Start(pCtx); err != nil {
+			// Tear down everything already brought up so a failed start doesn't
+			// orphan native resources or goroutines. Stop is a no-op on sources
+			// that never started.
+			for _, other := range p.sources {
+				other.Stop()
+			}
+			cancel()
+			close(p.ingest)
+			p.wg.Wait()
+			p.running.Store(false)
+			return fmt.Errorf("source start: %w", err)
+		}
 	}
 
-	p.logInfo(fmt.Sprintf("Publisher started: %d outstations, %d mappings", len(cfg.Outstations), len(cfg.Mappings)))
+	p.logInfo(fmt.Sprintf("Publisher started: %d outstations, %d modbus devices, %d mappings",
+		len(cfg.Outstations), len(cfg.ModbusDevices), len(cfg.Mappings)))
 	return nil
 }
 
@@ -219,9 +264,11 @@ func (p *Publisher) Stop() {
 	if p.cancel != nil {
 		p.cancel()
 	}
-	// master.Stop() returns only once protocol callbacks have ceased, so no
-	// goroutine can send on ingest after this — safe to close and drain.
-	p.master.Stop()
+	// Each source's Stop() returns only once its callbacks have ceased, so after
+	// all sources stop no goroutine can send on ingest — safe to close and drain.
+	for _, s := range p.sources {
+		s.Stop()
+	}
 	close(p.ingest)
 	p.wg.Wait()
 	if p.client != nil && p.client.IsConnected() {
@@ -254,11 +301,11 @@ func (p *Publisher) Status() Status {
 		s.Uptime = time.Since(p.startAt).Round(time.Second).String()
 	}
 
-	// Pull live per-outstation counters straight from the master so
-	// MeasurementsRx / LastReadAt reflect every callback, not only the ones
-	// that came alongside an OnStatusChange.
-	if p.master != nil {
-		for _, st := range p.master.Status() {
+	// Pull live per-source counters straight from each source so MeasurementsRx /
+	// LastReadAt reflect every callback, not only the ones that came alongside an
+	// OnStatusChange.
+	for _, src := range p.sources {
+		for _, st := range src.Status() {
 			s.Outstations[st.ID] = st
 		}
 	}
