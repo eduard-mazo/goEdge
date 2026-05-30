@@ -595,18 +595,22 @@ func (m *ffiMaster) Stop() {
 		}
 	}
 
+	// Tear down the runtime BEFORE deleting cgo.Handles. dnp3_runtime_destroy
+	// drains pending tasks and may fire one last on_change(SHUTDOWN) callback
+	// per channel; if the handle is already deleted those callbacks panic
+	// with "misuse of an invalid Handle".
+	if m.rt != nil {
+		C.dnp3_runtime_set_shutdown_timeout(m.rt, 5)
+		C.dnp3_runtime_destroy(m.rt)
+		m.rt = nil
+	}
+
 	m.mu.Lock()
 	for id, ctx := range m.assocs {
 		ctx.handle.Delete()
 		delete(m.assocs, id)
 	}
 	m.mu.Unlock()
-
-	if m.rt != nil {
-		C.dnp3_runtime_set_shutdown_timeout(m.rt, 5)
-		C.dnp3_runtime_destroy(m.rt)
-		m.rt = nil
-	}
 }
 
 func (m *ffiMaster) Status() []OutstationStatus {
