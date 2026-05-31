@@ -3,6 +3,13 @@ CONFIG   ?= config.json
 PORT     ?= 8080
 LOG      ?= info
 
+# TLS for the web UI/API. Set both to serve HTTPS from the run targets, e.g.
+#   make run-ffi TLS_CERT=cert.pem TLS_KEY=key.pem
+# Generate a throwaway dev cert with `make dev-cert`.
+TLS_CERT ?=
+TLS_KEY  ?=
+TLS_FLAGS = $(if $(strip $(TLS_CERT)),-tls-cert $(TLS_CERT) -tls-key $(TLS_KEY),)
+
 # DNP3 native lib (opendnp3, Apache 2.0) — vendored under third_party/opendnp3/{triple}/
 # Built once per host with `make opendnp3-vendor[-arm]`. Static archive, so it
 # links into the Go binary; nothing extra to deploy on the target.
@@ -39,7 +46,7 @@ SIM_DNP3_BIN    := /tmp/outstation_sim
         image-icr323x image-save-icr323x \
         check-dnp3-host check-dnp3-arm check-arm-toolchain \
         opendnp3-vendor opendnp3-vendor-arm \
-        sim-dnp3 sim-dnp3-build sim-modbus \
+        sim-dnp3 sim-dnp3-build sim-modbus dev-cert \
         test clean
 
 # ── Stub builds (no DNP3 lib needed; emits no measurements) ──────────
@@ -78,7 +85,7 @@ build-ffi-noembed: check-dnp3-host
 	go build -tags dnp3_ffi -trimpath -o $(BINARY) .
 
 run-ffi: build-ffi
-	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG)
+	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG) $(TLS_FLAGS)
 
 # Cross-compile with real DNP3 master for ICR-323x. Static-links libopendnp3.a
 # (and libstdc++); the resulting binary is self-contained for DNP3.
@@ -100,7 +107,7 @@ build-ffi-icr: icr323x-ffi
 
 run: ui-build
 	go build -tags embed -o $(BINARY) .
-	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG)
+	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG) $(TLS_FLAGS)
 
 web: run
 
@@ -195,6 +202,19 @@ sim-dnp3: sim-dnp3-build
 # Run the Modbus/TCP slave sim (pure Go; no opendnp3 needed).
 sim-modbus:
 	go run ./scripts/sim/modbusslave $(SIM_MODBUS_PORT)
+
+# ── TLS helper ───────────────────────────────────────────────────────
+#
+# Generate a throwaway self-signed cert (cert.pem/key.pem) for local HTTPS.
+# It encrypts traffic but browsers still warn (not CA-trusted). For a
+# warning-free cert use mkcert or your internal CA — the SAN must list the
+# host you browse to. Override the name via TLS_HOST.
+TLS_HOST ?= localhost
+dev-cert:
+	openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 \
+		-subj "/CN=$(TLS_HOST)" \
+		-addext "subjectAltName=DNS:$(TLS_HOST),DNS:localhost,IP:127.0.0.1"
+	@echo "wrote cert.pem + key.pem  →  make run-ffi TLS_CERT=cert.pem TLS_KEY=key.pem"
 
 # ── Clean ────────────────────────────────────────────────────────────
 

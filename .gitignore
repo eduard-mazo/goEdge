@@ -12,6 +12,9 @@
 /config.json
 /config.*.json
 
+# Local TLS certs/keys (use `make dev-cert`)
+*.pem
+
 # Frontend build artifacts (embed_prod.go embeds from web/dist at build time)
 /web/dist/
 /web/node_modules/
