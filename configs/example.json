@@ -1,106 +1,40 @@
 {
+  "_README": "Multiprotocol gateway example. Copy to ./config.json (or pass with -config) and edit hosts. 'outstations' are DNP3 masters; 'modbusDevices' are Modbus/TCP slaves; each mapping sets 'protocol' (dnp3|modbus) and references its source via 'sourceId'. Runs as-is against scripts/sim/outstation_sim (port 20100) + scripts/sim/modbusslave (port 1502).",
+
   "mqtt": {
-    "broker": "tcp://192.168.1.10:1883",
-    "clientId": "modbus-gw-01",
+    "broker": "tcp://localhost:1883",
+    "clientId": "multiproto-gw",
     "username": "",
     "password": "",
     "qos": 1,
     "keepalive": 60,
     "tls": { "enabled": false }
   },
-  "sparkplug": {
-    "groupId": "plant-floor",
-    "nodeId": "modbus-gw-01",
-    "birthOnConfigChange": true
-  },
-  "devices": [
-    {
-      "id": "plc-01",
-      "label": "Main PLC",
-      "host": "192.168.1.100",
-      "port": 502,
-      "timeoutMs": 3000,
-      "retries": 2,
-      "retryDelayMs": 500,
-      "enabled": true
-    }
+
+  "sparkplug": { "groupId": "plant-floor", "nodeId": "multiproto-gw", "birthOnConfigChange": true },
+
+  "outstations": [
+    { "id": "rtu-01", "label": "DNP3 RTU", "host": "127.0.0.1", "port": 20100,
+      "masterAddress": 1, "outstationAddress": 1024,
+      "responseTimeoutMs": 3000, "keepAliveMs": 60000,
+      "class1ScanMs": 2000, "startupIntegrity": true, "staticPollMs": 0, "enabled": true }
   ],
+
+  "modbusDevices": [
+    { "id": "plc-01", "label": "Modbus PLC", "host": "127.0.0.1", "port": 1502,
+      "unitId": 1, "scanRateMs": 1000, "timeoutMs": 2000, "retries": 1, "retryDelayMs": 500, "enabled": true }
+  ],
+
   "mappings": [
-    {
-      "id": "1",
-      "metricName": "tank/level_m",
-      "deviceId": "",
-      "modbusDeviceId": "plc-01",
-      "unitId": 1,
-      "function": "holding_register",
-      "address": 100,
-      "quantity": 2,
-      "dataType": "float32",
-      "byteOrder": "ABCD",
-      "scale": 1.0,
-      "offset": 0.0,
-      "engineeringUnit": "m",
-      "scanRateMs": 1000,
-      "deadband": 0.005,
-      "qualityPolicy": "last_known",
-      "enabled": true
-    },
-    {
-      "id": "2",
-      "metricName": "tank/level_pct",
-      "deviceId": "",
-      "modbusDeviceId": "plc-01",
-      "unitId": 1,
-      "function": "holding_register",
-      "address": 102,
-      "quantity": 1,
-      "dataType": "uint16",
-      "byteOrder": "ABCD",
-      "scale": 0.1,
-      "offset": 0.0,
-      "engineeringUnit": "%",
-      "scanRateMs": 1000,
-      "deadband": 0.1,
-      "qualityPolicy": "last_known",
-      "enabled": true
-    },
-    {
-      "id": "3",
-      "metricName": "pump/running",
-      "deviceId": "",
-      "modbusDeviceId": "plc-01",
-      "unitId": 1,
-      "function": "coil",
-      "address": 0,
-      "quantity": 1,
-      "dataType": "bool",
-      "byteOrder": "ABCD",
-      "scale": 1.0,
-      "offset": 0.0,
-      "engineeringUnit": "",
-      "scanRateMs": 500,
-      "deadband": 0,
-      "qualityPolicy": "good",
-      "enabled": true
-    },
-    {
-      "id": "4",
-      "metricName": "motor/temperature_C",
-      "deviceId": "motor-01",
-      "modbusDeviceId": "plc-01",
-      "unitId": 1,
-      "function": "input_register",
-      "address": 200,
-      "quantity": 1,
-      "dataType": "int16",
-      "byteOrder": "ABCD",
-      "scale": 0.1,
-      "offset": 0.0,
-      "engineeringUnit": "°C",
-      "scanRateMs": 2000,
-      "deadband": 0.5,
-      "qualityPolicy": "last_known",
-      "enabled": true
-    }
+    { "id": "d1", "metricName": "rtu/analog0",  "protocol": "dnp3", "sourceId": "rtu-01", "pointType": "analog",  "index": 0, "scale": 1, "offset": 0, "deadband": 0, "publishOnPoll": true, "enabled": true },
+    { "id": "d2", "metricName": "rtu/binary0",  "protocol": "dnp3", "sourceId": "rtu-01", "pointType": "binary",  "index": 0, "scale": 1, "deadband": 0, "publishOnPoll": true, "enabled": true },
+    { "id": "d3", "metricName": "rtu/counter0", "protocol": "dnp3", "sourceId": "rtu-01", "pointType": "counter", "index": 0, "scale": 1, "deadband": 0, "publishOnPoll": true, "enabled": true },
+
+    { "id": "m1", "metricName": "plc/tank_level", "protocol": "modbus", "sourceId": "plc-01", "function": "holding_register", "address": 0, "dataType": "float32", "byteOrder": "ABCD", "scale": 1, "engineeringUnit": "m",    "deadband": 0, "enabled": true },
+    { "id": "m2", "metricName": "plc/pump_speed", "protocol": "modbus", "sourceId": "plc-01", "function": "holding_register", "address": 2, "dataType": "uint16",  "scale": 1,   "engineeringUnit": "rpm",  "deadband": 0, "enabled": true },
+    { "id": "m3", "metricName": "plc/temp_c",     "protocol": "modbus", "sourceId": "plc-01", "function": "holding_register", "address": 3, "dataType": "int16",   "scale": 0.1, "engineeringUnit": "degC", "deadband": 0, "enabled": true },
+    { "id": "m4", "metricName": "plc/pressure",   "protocol": "modbus", "sourceId": "plc-01", "function": "input_register",   "address": 0, "dataType": "uint16",  "scale": 1,   "engineeringUnit": "kPa",  "deadband": 0, "enabled": true },
+    { "id": "m5", "metricName": "plc/pump_run",   "protocol": "modbus", "sourceId": "plc-01", "function": "coil",             "address": 0, "scale": 1, "deadband": 0, "enabled": true },
+    { "id": "m6", "metricName": "plc/fault",      "protocol": "modbus", "sourceId": "plc-01", "function": "discrete_input",   "address": 0, "scale": 1, "deadband": 0, "enabled": true }
   ]
 }
