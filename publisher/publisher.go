@@ -142,12 +142,10 @@ func normalizeMapping(sig config.SignalMapping) config.SignalMapping {
 	if !sig.IsModbus() {
 		return sig
 	}
-	switch sig.Function {
-	case "coil", "discrete_input":
-		sig.PointType = string(source.PointBinary)
-	default:
-		sig.PointType = string(source.PointAnalog)
-	}
+	// Route by (function, address): the function is the point type so that the
+	// same address under different functions (holding/input, coil/discrete) does
+	// not collide. mapping.Apply formats by function.
+	sig.PointType = sig.Function
 	sig.Index = sig.Address
 	sig.PublishOnPoll = true
 	return sig

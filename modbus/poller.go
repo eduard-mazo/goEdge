@@ -263,6 +263,9 @@ func (p *Poller) setConn(dev *device, connected bool, errMsg string) {
 // Modbus mapping.
 func resolvePoint(m config.SignalMapping) (point, error) {
 	pt := point{
+		// Routing point type is the function itself so that e.g. holding@0 and
+		// input@0 (or coil@0 and discrete@0) don't collide on (pointType,index).
+		ptype:     source.PointType(m.Function),
 		index:     m.Address,
 		function:  m.Function,
 		address:   m.Address,
@@ -272,12 +275,10 @@ func resolvePoint(m config.SignalMapping) (point, error) {
 	}
 	switch m.Function {
 	case "coil", "discrete_input":
-		pt.ptype = source.PointBinary
 		if pt.quantity == 0 {
 			pt.quantity = 1
 		}
 	case "input_register", "holding_register":
-		pt.ptype = source.PointAnalog
 		if pt.quantity == 0 {
 			q, err := registersFor(m.DataType)
 			if err != nil {
@@ -315,20 +316,18 @@ func decodeSample(deviceID string, pt point, raw []byte) (source.Sample, bool) {
 		Quality:   source.QualityOnline, // a successful read is, by definition, online
 		IsEvent:   false,                // Modbus reads are polls, never events
 	}
-	switch pt.ptype {
-	case source.PointBinary:
+	switch pt.function {
+	case "coil", "discrete_input":
 		if len(raw) < 1 {
 			return source.Sample{}, false
 		}
 		s.BoolValue = raw[0]&0x01 != 0
-	case source.PointAnalog:
+	default: // registers
 		v, ok := decodeNumeric(raw, pt.dataType, pt.byteOrder)
 		if !ok {
 			return source.Sample{}, false
 		}
 		s.FloatValue = v
-	default:
-		return source.Sample{}, false
 	}
 	return s, true
 }

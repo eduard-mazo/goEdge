@@ -36,6 +36,26 @@ func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 	var metric *sparkplug.Metric
 	var value float64 = math.NaN()
 
+	// Modbus points are formatted by function: coils/discretes → boolean,
+	// registers → engineering double (scale/offset applied).
+	if sig.IsModbus() {
+		switch sig.Function {
+		case "coil", "discrete_input":
+			metric = sparkplug.MetricBool(sig.MetricName, tsMs, m.BoolValue)
+			if m.BoolValue {
+				value = 1
+			} else {
+				value = 0
+			}
+		default:
+			eng := m.FloatValue*scale + sig.Offset
+			metric = sparkplug.MetricDouble(sig.MetricName, tsMs, eng)
+			value = eng
+		}
+		metric.Properties = qualityProperties(m.Quality, sig.EngineeringUnit)
+		return Result{Value: value, Metric: metric, IsNull: !m.Quality.Good()}, nil
+	}
+
 	switch m.PointType {
 	case source.PointBinary, source.PointBinaryOutputStatus:
 		metric = sparkplug.MetricBool(sig.MetricName, tsMs, m.BoolValue)
