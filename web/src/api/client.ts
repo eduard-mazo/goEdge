@@ -32,6 +32,11 @@ export const api = {
   updateOutstation:  (id: string, o: DNP3Outstation) => req<DNP3Outstation>('PUT', `/outstations/${id}`, o),
   deleteOutstation:  (id: string) => req<null>('DELETE', `/outstations/${id}`),
 
+  getModbusDevices:    ()  => req<ModbusDevice[]>('GET', '/modbusDevices'),
+  addModbusDevice:     (d: ModbusDevice) => req<ModbusDevice>('POST', '/modbusDevices', d),
+  updateModbusDevice:  (id: string, d: ModbusDevice) => req<ModbusDevice>('PUT', `/modbusDevices/${id}`, d),
+  deleteModbusDevice:  (id: string) => req<null>('DELETE', `/modbusDevices/${id}`),
+
   getMappings: ()      => req<SignalMapping[]>('GET', '/mappings'),
   addMapping:  (m: SignalMapping) => req<SignalMapping>('POST', '/mappings', m),
   updateMapping: (id: string, m: SignalMapping) => req<SignalMapping>('PUT', `/mappings/${id}`, m),

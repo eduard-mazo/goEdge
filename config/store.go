@@ -90,6 +90,41 @@ func (s *Store) DeleteOutstation(id string) error {
 	return s.save()
 }
 
+// UpsertModbusDevice adds or replaces a ModbusDevice by ID.
+func (s *Store) UpsertModbusDevice(d ModbusDevice) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, ex := range s.cfg.ModbusDevices {
+		if ex.ID == d.ID {
+			s.cfg.ModbusDevices[i] = d
+			return s.save()
+		}
+	}
+	s.cfg.ModbusDevices = append(s.cfg.ModbusDevices, d)
+	return s.save()
+}
+
+// DeleteModbusDevice removes a device and any Modbus mappings that reference it.
+func (s *Store) DeleteModbusDevice(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.cfg.ModbusDevices[:0]
+	for _, d := range s.cfg.ModbusDevices {
+		if d.ID != id {
+			filtered = append(filtered, d)
+		}
+	}
+	s.cfg.ModbusDevices = filtered
+	mappings := s.cfg.Mappings[:0]
+	for _, m := range s.cfg.Mappings {
+		if !(m.IsModbus() && m.Src() == id) {
+			mappings = append(mappings, m)
+		}
+	}
+	s.cfg.Mappings = mappings
+	return s.save()
+}
+
 // UpsertMapping adds or replaces a SignalMapping by ID.
 func (s *Store) UpsertMapping(m SignalMapping) error {
 	s.mu.Lock()

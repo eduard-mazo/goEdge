@@ -150,6 +150,7 @@
         <BrokerConfig    v-if="activeTab === 'broker'" />
         <SparkplugCfg    v-if="activeTab === 'sparkplug'" />
         <OutstationsConfig v-if="activeTab === 'outstations'" />
+        <ModbusConfig    v-if="activeTab === 'modbus'" />
         <MappingTable    v-if="activeTab === 'mappings'" />
         <LogConsole      v-if="activeTab === 'logs'" />
       </main>
@@ -166,6 +167,7 @@ import LiveValues    from '@/components/LiveValues.vue'
 import BrokerConfig  from '@/components/BrokerConfig.vue'
 import SparkplugCfg  from '@/components/SparkplugConfig.vue'
 import OutstationsConfig from '@/components/OutstationsConfig.vue'
+import ModbusConfig   from '@/components/ModbusConfig.vue'
 import MappingTable  from '@/components/MappingTable.vue'
 import LogConsole    from '@/components/LogConsole.vue'
 import QuickConfig   from '@/components/QuickConfig.vue'
@@ -176,6 +178,7 @@ const IconLive   = { template: '<svg width="14" height="14" viewBox="0 0 24 24" 
 const IconWifi   = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/></svg>' }
 const IconSpark  = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>' }
 const IconDevice = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="1"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><circle cx="12" cy="17" r="1"/></svg>' }
+const IconChip   = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>' }
 const IconMap    = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' }
 const IconLog    = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' }
 
@@ -187,6 +190,7 @@ const tabs = [
   { id: 'broker',    label: 'Broker',    icon: IconWifi   },
   { id: 'sparkplug', label: 'Sparkplug', icon: IconSpark  },
   { id: 'outstations', label: 'Outstations', icon: IconDevice },
+  { id: 'modbus',    label: 'Modbus',    icon: IconChip   },
   { id: 'mappings',  label: 'Mappings',  icon: IconMap    },
   { id: 'logs',      label: 'Log',       icon: IconLog    },
 ] as const
@@ -233,6 +237,7 @@ onMounted(() => {
 
   store.loadStatus()
   store.loadOutstations()
+  store.loadModbusDevices()
   store.loadMappings()
   store.connectWS()
   setInterval(() => store.loadStatus(), 4000)

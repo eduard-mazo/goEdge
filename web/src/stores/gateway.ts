@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { api, type GatewayStatus, type DNP3Outstation, type SignalMapping } from '@/api/client'
+import { api, type GatewayStatus, type DNP3Outstation, type ModbusDevice, type SignalMapping } from '@/api/client'
 
 export const useGatewayStore = defineStore('gateway', () => {
   const status = ref<GatewayStatus | null>(null)
   const outstations = ref<DNP3Outstation[]>([])
+  const modbusDevices = ref<ModbusDevice[]>([])
   const mappings = ref<SignalMapping[]>([])
   const logs = ref<{ level: string; message: string; time: string }[]>([])
   const ws = ref<WebSocket | null>(null)
@@ -20,6 +21,10 @@ export const useGatewayStore = defineStore('gateway', () => {
 
   async function loadOutstations() {
     outstations.value = await api.getOutstations()
+  }
+
+  async function loadModbusDevices() {
+    modbusDevices.value = await api.getModbusDevices()
   }
 
   async function loadMappings() {
@@ -71,8 +76,8 @@ export const useGatewayStore = defineStore('gateway', () => {
   }
 
   return {
-    status, outstations, mappings, logs, isRunning, mqttConnected,
-    loadStatus, loadOutstations, loadMappings,
+    status, outstations, modbusDevices, mappings, logs, isRunning, mqttConnected,
+    loadStatus, loadOutstations, loadModbusDevices, loadMappings,
     startGateway, stopGateway,
     connectWS, addLog,
   }

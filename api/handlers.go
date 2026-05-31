@@ -77,6 +77,9 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/api/outstations", s.handleOutstations)
 	s.mux.HandleFunc("/api/outstations/", s.handleOutstation)
 
+	s.mux.HandleFunc("/api/modbusDevices", s.handleModbusDevices)
+	s.mux.HandleFunc("/api/modbusDevices/", s.handleModbusDevice)
+
 	s.mux.HandleFunc("/api/mappings", s.handleMappings)
 	s.mux.HandleFunc("/api/mappings/export", s.handleMappingsExport)
 	s.mux.HandleFunc("/api/mappings/import", s.handleMappingsImport)
@@ -223,6 +226,69 @@ func (s *Server) handleOutstation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.gw.logEvent("info", "Outstation deleted: "+id)
+		writeOK(w, nil)
+	default:
+		writeFail(w, http.StatusMethodNotAllowed, "PUT or DELETE")
+	}
+}
+
+// --- Modbus devices ---
+
+func (s *Server) handleModbusDevices(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeOK(w, s.gw.store.Get().ModbusDevices)
+	case http.MethodPost:
+		var d config.ModbusDevice
+		if err := decode(r.Body, &d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateModbusDevice(d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.gw.store.UpsertModbusDevice(d); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.gw.logEvent("info", "Modbus device added: "+d.ID)
+		writeOK(w, d)
+	default:
+		writeFail(w, http.StatusMethodNotAllowed, "GET or POST")
+	}
+}
+
+func (s *Server) handleModbusDevice(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/modbusDevices/")
+	if id == "" {
+		writeFail(w, http.StatusBadRequest, "missing device id")
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var d config.ModbusDevice
+		if err := decode(r.Body, &d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		d.ID = id
+		if err := validateModbusDevice(d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.gw.store.UpsertModbusDevice(d); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.gw.logEvent("info", "Modbus device updated: "+id)
+		writeOK(w, d)
+	case http.MethodDelete:
+		if err := s.gw.store.DeleteModbusDevice(id); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.gw.logEvent("info", "Modbus device deleted: "+id)
 		writeOK(w, nil)
 	default:
 		writeFail(w, http.StatusMethodNotAllowed, "PUT or DELETE")
@@ -417,6 +483,19 @@ func validateOutstation(o config.DNP3Outstation) error {
 	return nil
 }
 
+func validateModbusDevice(d config.ModbusDevice) error {
+	if d.ID == "" {
+		return fmt.Errorf("id is required")
+	}
+	if d.Host == "" {
+		return fmt.Errorf("host is required")
+	}
+	if d.Port != 0 && (d.Port < 1 || d.Port > 65535) {
+		return fmt.Errorf("port must be 1-65535")
+	}
+	return nil
+}
+
 var validPointTypes = map[string]bool{
 	"binary":               true,
 	"double_bit_binary":    true,
@@ -428,26 +507,63 @@ var validPointTypes = map[string]bool{
 	"octet_string":         true,
 }
 
+var validModbusFunctions = map[string]bool{
+	"coil":             true,
+	"discrete_input":   true,
+	"input_register":   true,
+	"holding_register": true,
+}
+
+var validModbusDataTypes = map[string]bool{
+	"bool": true, "int16": true, "uint16": true,
+	"int32": true, "uint32": true, "float32": true, "float64": true,
+}
+
 func validateMapping(sig config.SignalMapping, cfg config.AppConfig) error {
 	if sig.MetricName == "" {
 		return fmt.Errorf("metricName is required")
 	}
+
+	if sig.IsModbus() {
+		if !validModbusFunctions[sig.Function] {
+			return fmt.Errorf("function must be one of coil|discrete_input|input_register|holding_register")
+		}
+		if sig.DataType != "" && !validModbusDataTypes[sig.DataType] {
+			return fmt.Errorf("dataType must be one of bool|int16|uint16|int32|uint32|float32|float64")
+		}
+		if sig.Src() == "" {
+			return fmt.Errorf("sourceId is required for modbus mappings")
+		}
+		found := false
+		for _, d := range cfg.ModbusDevices {
+			if d.ID == sig.Src() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("modbus device %q not found", sig.Src())
+		}
+		return nil
+	}
+
+	// DNP3 mapping
 	if !validPointTypes[sig.PointType] {
 		return fmt.Errorf("pointType must be one of binary|double_bit_binary|binary_output_status|counter|frozen_counter|analog|analog_output_status|octet_string")
 	}
 	if sig.EventClass > 3 {
 		return fmt.Errorf("eventClass must be 0..3")
 	}
-	if sig.OutstationID != "" {
+	if sig.Src() != "" {
 		found := false
 		for _, o := range cfg.Outstations {
-			if o.ID == sig.OutstationID {
+			if o.ID == sig.Src() {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return fmt.Errorf("outstationId %q not found", sig.OutstationID)
+			return fmt.Errorf("outstationId %q not found", sig.Src())
 		}
 	}
 	return nil
