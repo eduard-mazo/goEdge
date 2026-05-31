@@ -27,6 +27,11 @@ DNP3_ARM_LDFLAGS   := -L$(CURDIR)/$(DNP3_ARM_DIR)/lib -lopendnp3 -l:libstdc++.a 
 IMAGE_ICR   ?= localhost/gomqttdnp3:icr323x
 TARBALL_ICR ?= goMqttDnp3-icr323x.tar
 
+# Field-device simulators (see scripts/sim/README.md)
+SIM_DNP3_PORT   ?= 20100
+SIM_MODBUS_PORT ?= 1502
+SIM_DNP3_BIN    := /tmp/outstation_sim
+
 .PHONY: build build-ffi build-ffi-noembed build-ffi-icr \
         run run-ffi linux windows icr323x icr323x-ffi \
         ui-install ui-build ui-dev \
@@ -34,6 +39,7 @@ TARBALL_ICR ?= goMqttDnp3-icr323x.tar
         image-icr323x image-save-icr323x \
         check-dnp3-host check-dnp3-arm check-arm-toolchain \
         opendnp3-vendor opendnp3-vendor-arm \
+        sim-dnp3 sim-dnp3-build sim-modbus \
         test clean
 
 # ── Stub builds (no DNP3 lib needed; emits no measurements) ──────────
@@ -167,6 +173,28 @@ opendnp3-vendor:
 
 opendnp3-vendor-arm:
 	bash scripts/build-opendnp3.sh armv7-linux
+
+# ── Field-device simulators (docs: scripts/sim/README.md) ────────────
+#
+# Each runs in the foreground (Ctrl-C to stop). Override ports with
+# SIM_DNP3_PORT / SIM_MODBUS_PORT. Point a gateway config at them
+# (see configs/example.json) and `make run-ffi` to exercise both.
+
+# Compile the DNP3 outstation sim (C++; needs vendored opendnp3 + g++).
+sim-dnp3-build: check-dnp3-host
+	@command -v g++ >/dev/null || { echo "ERROR: g++ not found (apt install g++)"; exit 1; }
+	g++ -std=c++17 -I$(DNP3_HOST_DIR)/include \
+		scripts/sim/outstation_sim.cpp $(DNP3_HOST_DIR)/lib/libopendnp3.a \
+		-lssl -lcrypto -lpthread -o $(SIM_DNP3_BIN)
+	@echo "built $(SIM_DNP3_BIN)"
+
+# Build + run the DNP3 outstation sim (outstation addr 1024, master addr 1).
+sim-dnp3: sim-dnp3-build
+	$(SIM_DNP3_BIN) $(SIM_DNP3_PORT)
+
+# Run the Modbus/TCP slave sim (pure Go; no opendnp3 needed).
+sim-modbus:
+	go run ./scripts/sim/modbusslave $(SIM_MODBUS_PORT)
 
 # ── Clean ────────────────────────────────────────────────────────────
 
