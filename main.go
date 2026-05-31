@@ -16,9 +16,19 @@ func main() {
 	port     := flag.String("port",   "8080",                     "HTTP UI port")
 	cfgPath  := flag.String("config", "config.json",              "Config file path")
 	logLevel := flag.String("log",    "info",                     "Log level: debug|info|warn|error")
+	tlsCert  := flag.String("tls-cert", "",                       "PEM cert file; enables HTTPS when set with -tls-key")
+	tlsKey   := flag.String("tls-key",  "",                       "PEM private key file; enables HTTPS when set with -tls-cert")
 	flag.Parse()
 
 	setupLogger(*logLevel)
+
+	// TLS is enabled only when both cert and key are given. Providing just one is
+	// a misconfiguration — fail loudly rather than silently serving plaintext.
+	useTLS := *tlsCert != "" || *tlsKey != ""
+	if useTLS && (*tlsCert == "" || *tlsKey == "") {
+		slog.Error("TLS requires both -tls-cert and -tls-key")
+		os.Exit(1)
+	}
 
 	store, err := config.NewStore(*cfgPath)
 	if err != nil {
@@ -30,7 +40,11 @@ func main() {
 	srv := api.NewServer(store, hub, staticHandler())
 
 	addr := ":" + *port
-	slog.Info("goMqttDnp3 gateway", "addr", "http://localhost"+addr, "config", *cfgPath)
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
+	}
+	slog.Info("goMqttDnp3 gateway", "addr", scheme+"://localhost"+addr, "config", *cfgPath, "tls", useTLS)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -41,8 +55,16 @@ func main() {
 		os.Exit(0)
 	}()
 
-	if err := http.ListenAndServe(addr, srv); err != nil {
-		slog.Error("http server", "err", err)
+	// crypto/tls is pure Go (no OpenSSL), so HTTPS here cross-compiles to the
+	// ICR-3232 (linux/arm/v7) with no extra native dependency.
+	var serveErr error
+	if useTLS {
+		serveErr = http.ListenAndServeTLS(addr, *tlsCert, *tlsKey, srv)
+	} else {
+		serveErr = http.ListenAndServe(addr, srv)
+	}
+	if serveErr != nil {
+		slog.Error("http server", "err", serveErr)
 		os.Exit(1)
 	}
 }
