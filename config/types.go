@@ -12,6 +12,63 @@ type AppConfig struct {
 	Outstations   []DNP3Outstation `json:"outstations"`
 	ModbusDevices []ModbusDevice   `json:"modbusDevices"`
 	Mappings      []SignalMapping  `json:"mappings"`
+	System        SystemConfig     `json:"system"`
+}
+
+// SystemConfig controls host-telemetry collection (CPU, memory, disk, network,
+// temperature, uptime). When Enabled, the publisher samples the host every
+// IntervalMs and publishes the result as Sparkplug node metrics under
+// MetricPrefix. These are zero-config — no SignalMapping is required.
+type SystemConfig struct {
+	Enabled       bool          `json:"enabled"`
+	IntervalMs    int           `json:"intervalMs"`    // poll cadence; default 5000
+	MetricPrefix  string        `json:"metricPrefix"`  // folder prefix; default "System/"
+	Mounts        []string      `json:"mounts"`        // filesystems to report; default ["/"]
+	Interfaces    []string      `json:"interfaces"`    // NICs to report; empty = all non-loopback
+	TempSensorKey string        `json:"tempSensorKey"` // sensor-key substring to prefer; empty = auto
+	Metrics       SystemMetrics `json:"metrics"`       // which metric groups to publish
+
+	// DisabledMetrics lists individual metric suffixes to exclude even when their
+	// group is enabled (e.g. "Memory/Used_MB"). Disk/network entries use the
+	// "<mount>"/"<iface>" placeholders, e.g. "Disk/<mount>/Free_MB", which match
+	// every concrete mount/interface. Suffixes are relative to MetricPrefix.
+	DisabledMetrics []string `json:"disabledMetrics"`
+}
+
+// SystemMetrics selects which host-telemetry groups the collector publishes.
+// As a safety net, if every flag is false the collector treats it as "all on"
+// (see Effective) — so older configs without this block, or a sparse PUT,
+// still publish everything rather than silently nothing.
+type SystemMetrics struct {
+	CPU          bool `json:"cpu"`          // CPU/Usage_pct
+	Load         bool `json:"load"`         // CPU/Load1, Load5, Load15
+	Memory       bool `json:"memory"`       // Memory/Used_pct, Used_MB, Available_MB, Total_MB
+	Swap         bool `json:"swap"`         // Memory/Swap_Used_pct
+	Disk         bool `json:"disk"`         // Disk/<mount>/Used_pct, Free_MB
+	Network      bool `json:"network"`      // Network/<iface>/Rx_MB, Tx_MB (totals)
+	NetworkRates bool `json:"networkRates"` // Network/<iface>/RxRate_kbps, TxRate_kbps
+	Temperature  bool `json:"temperature"`  // Temperature/CPU_C
+	Uptime       bool `json:"uptime"`       // Uptime_h
+	Processes    bool `json:"processes"`    // Process/Count
+}
+
+// Any reports whether at least one metric group is selected.
+func (m SystemMetrics) Any() bool {
+	return m.CPU || m.Load || m.Memory || m.Swap || m.Disk ||
+		m.Network || m.NetworkRates || m.Temperature || m.Uptime || m.Processes
+}
+
+// Effective returns the selection to actually use: the configured one, or — when
+// nothing is selected — all groups enabled, so the gateway never silently
+// publishes zero system metrics while monitoring is on.
+func (m SystemMetrics) Effective() SystemMetrics {
+	if m.Any() {
+		return m
+	}
+	return SystemMetrics{
+		CPU: true, Load: true, Memory: true, Swap: true, Disk: true,
+		Network: true, NetworkRates: true, Temperature: true, Uptime: true, Processes: true,
+	}
 }
 
 // ModbusDevice represents a Modbus/TCP slave reachable over the network.
@@ -206,5 +263,15 @@ func DefaultAppConfig() AppConfig {
 		Outstations:   []DNP3Outstation{},
 		ModbusDevices: []ModbusDevice{},
 		Mappings:      []SignalMapping{},
+		System: SystemConfig{
+			Enabled:      false,
+			IntervalMs:   5000,
+			MetricPrefix: "System/",
+			Mounts:       []string{"/"},
+			Metrics: SystemMetrics{
+				CPU: true, Load: true, Memory: true, Swap: true, Disk: true,
+				Network: true, NetworkRates: true, Temperature: true, Uptime: true, Processes: true,
+			},
+		},
 	}
 }

@@ -27,6 +27,9 @@ export const api = {
   getSparkplug: ()     => req<SparkplugConfig>('GET',  '/config/sparkplug'),
   setSparkplug: (c: SparkplugConfig) => req<SparkplugConfig>('PUT', '/config/sparkplug', c),
 
+  getSystem:   ()      => req<SystemConfig>('GET',  '/config/system'),
+  setSystem:   (c: SystemConfig) => req<SystemConfig>('PUT', '/config/system', c),
+
   getOutstations:    ()  => req<DNP3Outstation[]>('GET', '/outstations'),
   addOutstation:     (o: DNP3Outstation) => req<DNP3Outstation>('POST', '/outstations', o),
   updateOutstation:  (id: string, o: DNP3Outstation) => req<DNP3Outstation>('PUT', `/outstations/${id}`, o),
@@ -72,6 +75,32 @@ export interface SparkplugConfig {
   groupId: string
   nodeId: string
   birthOnConfigChange?: boolean
+}
+
+// SystemMetrics selects which host-telemetry groups are published.
+export interface SystemMetrics {
+  cpu?: boolean          // CPU/Usage_pct
+  load?: boolean         // CPU/Load1, Load5, Load15
+  memory?: boolean       // Memory/Used_pct, Used_MB, Available_MB, Total_MB
+  swap?: boolean         // Memory/Swap_Used_pct
+  disk?: boolean         // Disk/<mount>/Used_pct, Free_MB
+  network?: boolean      // Network/<iface>/Rx_MB, Tx_MB
+  networkRates?: boolean // Network/<iface>/RxRate_kbps, TxRate_kbps
+  temperature?: boolean  // Temperature/CPU_C
+  uptime?: boolean       // Uptime_h
+  processes?: boolean    // Process/Count
+}
+
+// SystemConfig controls host-telemetry collection (CPU/mem/disk/net/temp).
+export interface SystemConfig {
+  enabled: boolean
+  intervalMs?: number        // poll cadence; default 5000
+  metricPrefix?: string      // folder prefix; default "System/"
+  mounts?: string[]          // filesystems to report; default ["/"]
+  interfaces?: string[]      // NICs to report; empty = all non-loopback
+  tempSensorKey?: string     // sensor-key substring to prefer; empty = auto
+  metrics?: SystemMetrics    // which metric groups to publish
+  disabledMetrics?: string[] // individual metric suffixes to exclude (e.g. "Memory/Used_MB")
 }
 
 export interface DNP3Outstation {
@@ -177,6 +206,7 @@ export interface AppConfig {
   outstations: DNP3Outstation[]
   modbusDevices: ModbusDevice[]
   mappings: SignalMapping[]
+  system: SystemConfig
 }
 
 export interface GatewayStatus {

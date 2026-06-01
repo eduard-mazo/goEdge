@@ -73,6 +73,7 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/config/mqtt", s.handleMQTT)
 	s.mux.HandleFunc("/api/config/sparkplug", s.handleSparkplug)
+	s.mux.HandleFunc("/api/config/system", s.handleSystem)
 
 	s.mux.HandleFunc("/api/outstations", s.handleOutstations)
 	s.mux.HandleFunc("/api/outstations/", s.handleOutstation)
@@ -163,6 +164,36 @@ func (s *Server) handleSparkplug(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.gw.logEvent("info", "Sparkplug config updated")
+		writeOK(w, cfg)
+	default:
+		writeFail(w, http.StatusMethodNotAllowed, "GET or PUT")
+	}
+}
+
+func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeOK(w, s.gw.store.Get().System)
+	case http.MethodPut:
+		var cfg config.SystemConfig
+		if err := decode(r.Body, &cfg); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateSystem(&cfg); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.gw.store.UpdateSystem(cfg); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Hot-apply to the running gateway so changes take effect without a
+		// restart; when stopped, New() picks it up on the next Start.
+		if s.gw.pub != nil {
+			s.gw.pub.ApplySystemConfig(cfg)
+		}
+		s.gw.logEvent("info", "System monitoring config updated")
 		writeOK(w, cfg)
 	default:
 		writeFail(w, http.StatusMethodNotAllowed, "GET or PUT")
@@ -457,6 +488,24 @@ func validateSparkplug(cfg config.SparkplugConfig) error {
 	}
 	if cfg.NodeID == "" {
 		return fmt.Errorf("nodeId is required")
+	}
+	return nil
+}
+
+// validateSystem normalizes and bounds-checks the system-monitoring config,
+// filling defaults in place so a sparse PUT (e.g. just {"enabled":true}) is valid.
+func validateSystem(cfg *config.SystemConfig) error {
+	if cfg.IntervalMs == 0 {
+		cfg.IntervalMs = 5000
+	}
+	if cfg.IntervalMs < 500 {
+		return fmt.Errorf("intervalMs must be >= 500")
+	}
+	if cfg.MetricPrefix == "" {
+		cfg.MetricPrefix = "System/"
+	}
+	if len(cfg.Mounts) == 0 {
+		cfg.Mounts = []string{"/"}
 	}
 	return nil
 }

@@ -35,6 +35,7 @@ import (
 	"goMqttDnp3/modbus"
 	"goMqttDnp3/source"
 	"goMqttDnp3/sparkplug"
+	"goMqttDnp3/sysmon"
 )
 
 // Status snapshots the publisher's runtime state for the API.
@@ -64,6 +65,15 @@ type Publisher struct {
 
 	node   *sparkplug.Node
 	client mqtt.Client
+
+	// sysCollector samples host telemetry (CPU/mem/disk/net/temp) when enabled;
+	// nil when disabled. Guarded by sysMu so the API can swap it in live
+	// (ApplySystemConfig) without restarting the gateway. sysInterval is the
+	// current poll cadence; sysReload nudges sysLoop to pick up a new interval.
+	sysMu        sync.RWMutex
+	sysCollector *sysmon.Collector
+	sysInterval  time.Duration
+	sysReload    chan struct{}
 
 	// fast index: outstationID → []SignalMapping for measurement routing.
 	mapIdx   map[string][]config.SignalMapping
@@ -131,6 +141,14 @@ func New(cfg config.AppConfig) *Publisher {
 	p.master = dnp3.New(p)
 	p.modbus = modbus.New(p)
 	p.sources = []source.Source{p.master, p.modbus}
+	if cfg.System.Enabled {
+		p.sysCollector = sysmon.New(cfg.System)
+	}
+	iv := cfg.System.IntervalMs
+	if iv <= 0 {
+		iv = 5000
+	}
+	p.sysInterval = time.Duration(iv) * time.Millisecond
 	return p
 }
 
@@ -249,9 +267,131 @@ func (p *Publisher) Start(ctx context.Context) error {
 		}
 	}
 
+	// The system-telemetry loop always runs; it no-ops while no collector is set,
+	// so monitoring can be toggled live (ApplySystemConfig) without a restart.
+	p.sysReload = make(chan struct{}, 1)
+	p.wg.Add(1)
+	go p.sysLoop(pCtx)
+	if p.collector() != nil {
+		p.logInfo(fmt.Sprintf("System monitoring enabled (every %s)", p.currentInterval()))
+	}
+
 	p.logInfo(fmt.Sprintf("Publisher started: %d outstations, %d modbus devices, %d mappings",
 		len(cfg.Outstations), len(cfg.ModbusDevices), len(cfg.Mappings)))
 	return nil
+}
+
+// sysLoop samples host telemetry on a ticker and publishes it as node metrics.
+// It records each value into lastVal first (so the dashboard sees it), then
+// publishes/buffers — publishOrBuffer's alias-compression mutates metric names,
+// so the record must happen before the publish. The collector and interval can
+// change at runtime (ApplySystemConfig): a nil collector makes the tick a no-op,
+// and a sysReload signal resets the ticker. Exits on ctx cancellation.
+func (p *Publisher) sysLoop(ctx context.Context) {
+	defer p.wg.Done()
+	interval := p.currentInterval()
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.sysReload:
+			if iv := p.currentInterval(); iv != interval {
+				interval = iv
+				t.Reset(interval)
+			}
+		case <-t.C:
+			c := p.collector()
+			if c == nil {
+				continue
+			}
+			ms := c.Collect(sparkplug.NowMs())
+			if len(ms) == 0 {
+				continue
+			}
+			p.recordReadings(ms)
+			if err := p.publishOrBuffer("", ms); err != nil {
+				p.errorCount.Add(1)
+				slog.Warn("system metrics publish failed", "err", err)
+			}
+		}
+	}
+}
+
+// collector returns the active system collector (nil when monitoring is off).
+func (p *Publisher) collector() *sysmon.Collector {
+	p.sysMu.RLock()
+	defer p.sysMu.RUnlock()
+	return p.sysCollector
+}
+
+// currentInterval returns the system poll cadence, defaulting to 5s.
+func (p *Publisher) currentInterval() time.Duration {
+	p.sysMu.RLock()
+	defer p.sysMu.RUnlock()
+	if p.sysInterval <= 0 {
+		return 5 * time.Second
+	}
+	return p.sysInterval
+}
+
+// ApplySystemConfig swaps the system-telemetry collection live, with no gateway
+// restart: it rebuilds (or clears) the collector, updates the interval, and
+// re-issues NBIRTH so the new metric set is declared with fresh aliases. Safe to
+// call from the API goroutine while the gateway runs; a no-op when stopped (the
+// new config takes effect on the next Start via New).
+func (p *Publisher) ApplySystemConfig(cfg config.SystemConfig) {
+	if !p.running.Load() {
+		return
+	}
+	p.sysMu.Lock()
+	if cfg.Enabled {
+		p.sysCollector = sysmon.New(cfg)
+	} else {
+		p.sysCollector = nil
+	}
+	iv := cfg.IntervalMs
+	if iv <= 0 {
+		iv = 5000
+	}
+	p.sysInterval = time.Duration(iv) * time.Millisecond
+	p.sysMu.Unlock()
+
+	// Rebirth so subscribers learn the new metric set (and aliases) immediately.
+	if p.client != nil && p.client.IsConnected() {
+		if err := p.node.PublishNBirth(p.client, p.buildBirthMetrics()); err != nil {
+			p.logWarn("rebirth after system-config change failed: " + err.Error())
+		}
+		p.publishDBirths()
+	}
+	// Nudge sysLoop to adopt the new interval (non-blocking; coalesced).
+	select {
+	case p.sysReload <- struct{}{}:
+	default:
+	}
+	if cfg.Enabled {
+		p.logInfo(fmt.Sprintf("System monitoring updated live (every %s)", p.currentInterval()))
+	} else {
+		p.logInfo("System monitoring disabled live")
+	}
+}
+
+// recordReadings mirrors numeric metric values into lastVal so they surface in
+// Status.LastReadings (and thus the UI) even though they bypass the mapping path.
+func (p *Publisher) recordReadings(ms []*sparkplug.Metric) {
+	p.lastMu.Lock()
+	for _, m := range ms {
+		switch {
+		case m.DoubleValue != nil:
+			p.lastVal[m.Name] = *m.DoubleValue
+		case m.LongValue != nil:
+			p.lastVal[m.Name] = float64(*m.LongValue)
+		case m.IntValue != nil:
+			p.lastVal[m.Name] = float64(*m.IntValue)
+		}
+	}
+	p.lastMu.Unlock()
 }
 
 // Stop tears down the master and sends NDEATH.
@@ -475,6 +615,11 @@ func (p *Publisher) buildBirthMetrics() []*sparkplug.Metric {
 			continue
 		}
 		metrics = append(metrics, sparkplug.MetricDouble(sig.MetricName, ts, 0))
+	}
+	// Declare system metrics in NBIRTH so they alias-compress in NDATA. This also
+	// primes the collector's network-rate baseline.
+	if c := p.collector(); c != nil {
+		metrics = append(metrics, c.Collect(ts)...)
 	}
 	return metrics
 }

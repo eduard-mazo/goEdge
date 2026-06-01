@@ -36,5 +36,19 @@
     { "id": "m4", "metricName": "plc/pressure",   "protocol": "modbus", "sourceId": "plc-01", "function": "input_register",   "address": 0, "dataType": "uint16",  "scale": 1,   "engineeringUnit": "kPa",  "deadband": 0, "enabled": true },
     { "id": "m5", "metricName": "plc/pump_run",   "protocol": "modbus", "sourceId": "plc-01", "function": "coil",             "address": 0, "scale": 1, "deadband": 0, "enabled": true },
     { "id": "m6", "metricName": "plc/fault",      "protocol": "modbus", "sourceId": "plc-01", "function": "discrete_input",   "address": 0, "scale": 1, "deadband": 0, "enabled": true }
-  ]
+  ],
+
+  "system": {
+    "enabled": true,
+    "intervalMs": 5000,
+    "metricPrefix": "System/",
+    "mounts": ["/"],
+    "interfaces": [],
+    "tempSensorKey": "",
+    "metrics": {
+      "cpu": true, "load": true, "memory": true, "swap": true, "disk": true,
+      "network": true, "networkRates": true, "temperature": true, "uptime": true, "processes": true
+    },
+    "disabledMetrics": []
+  }
 }

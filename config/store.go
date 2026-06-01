@@ -55,6 +55,14 @@ func (s *Store) UpdateSparkplug(sp SparkplugConfig) error {
 	return s.save()
 }
 
+// UpdateSystem replaces only the System (host telemetry) section.
+func (s *Store) UpdateSystem(sys SystemConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg.System = sys
+	return s.save()
+}
+
 // UpsertOutstation adds or replaces a DNP3Outstation by ID.
 func (s *Store) UpsertOutstation(o DNP3Outstation) error {
 	s.mu.Lock()

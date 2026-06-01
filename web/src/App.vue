@@ -152,6 +152,7 @@
         <OutstationsConfig v-if="activeTab === 'outstations'" />
         <ModbusConfig    v-if="activeTab === 'modbus'" />
         <MappingTable    v-if="activeTab === 'mappings'" />
+        <SystemPanel     v-if="activeTab === 'system'" />
         <LogConsole      v-if="activeTab === 'logs'" />
       </main>
     </div>
@@ -171,6 +172,7 @@ import ModbusConfig   from '@/components/ModbusConfig.vue'
 import MappingTable  from '@/components/MappingTable.vue'
 import LogConsole    from '@/components/LogConsole.vue'
 import QuickConfig   from '@/components/QuickConfig.vue'
+import SystemPanel   from '@/components/SystemPanel.vue'
 
 // ── Inline SVG icon components ──────────────────────────────────
 const IconGauge  = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10"/><path d="m12 12-3-5"/><circle cx="12" cy="12" r="1.5"/></svg>' }
@@ -181,6 +183,7 @@ const IconDevice = { template: '<svg width="14" height="14" viewBox="0 0 24 24" 
 const IconChip   = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>' }
 const IconMap    = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' }
 const IconLog    = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' }
+const IconCpu    = { template: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>' }
 
 const store = useGatewayStore()
 
@@ -192,6 +195,7 @@ const tabs = [
   { id: 'outstations', label: 'Outstations', icon: IconDevice },
   { id: 'modbus',    label: 'Modbus',    icon: IconChip   },
   { id: 'mappings',  label: 'Mappings',  icon: IconMap    },
+  { id: 'system',    label: 'System',    icon: IconCpu    },
   { id: 'logs',      label: 'Log',       icon: IconLog    },
 ] as const
 
