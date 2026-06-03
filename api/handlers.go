@@ -202,24 +202,50 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSystemTelemetry samples host telemetry on demand and returns it as a
-// flat metric-name → value map. It runs the same collector the publisher uses,
-// but reads /proc and /sys directly, so it works even when the gateway is
-// stopped or the MQTT broker is unreachable — a fallback view of the device
-// when nothing is reaching the broker.
+// handleSystemTelemetry returns host telemetry as a flat metric-name → value
+// map. When the publisher is running with system monitoring enabled it returns
+// the publisher's own live sample; otherwise it samples on demand via the
+// collector (reading /proc and /sys directly), so it still works when the
+// gateway is stopped or the MQTT broker is unreachable.
+//
+// The two paths are deliberate: gopsutil's cpu.Percent(0) keeps its previous
+// sample in a package-global, so sampling a second collector here while the
+// publisher is also sampling corrupts the shared CPU baseline and pegs the
+// publisher's CPU% (and thus the UI) at 100. Reusing its readings avoids a
+// competing caller entirely.
 func (s *Server) handleSystemTelemetry(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeFail(w, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 	cfg := s.gw.store.Get().System
-	metrics := sysmon.New(cfg).Collect(uint64(time.Now().UnixMilli()))
-	values := make(map[string]float64, len(metrics))
-	for _, m := range metrics {
-		if m.DoubleValue != nil {
-			values[m.Name] = *m.DoubleValue
+	prefix := cfg.MetricPrefix
+	if prefix == "" {
+		prefix = "System/"
+	}
+
+	var st publisher.Status
+	if s.gw.pub != nil {
+		st = s.gw.pub.Status()
+	}
+
+	values := make(map[string]float64)
+	if st.Running && cfg.Enabled {
+		// Publisher is sampling the host already — reuse its readings.
+		for k, v := range st.LastReadings {
+			if strings.HasPrefix(k, prefix) {
+				values[k] = v
+			}
+		}
+	} else {
+		// Nothing else is sampling; safe to read on demand.
+		for _, m := range sysmon.New(cfg).Collect(uint64(time.Now().UnixMilli())) {
+			if m.DoubleValue != nil {
+				values[m.Name] = *m.DoubleValue
+			}
 		}
 	}
+
 	writeOK(w, map[string]any{
 		"time":    time.Now().UTC().Format(time.RFC3339),
 		"metrics": values,
