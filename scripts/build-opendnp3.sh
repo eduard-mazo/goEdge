@@ -7,12 +7,16 @@
 # Usage:
 #   scripts/build-opendnp3.sh                 # host triple (x86_64 glibc)
 #   scripts/build-opendnp3.sh armv7-linux     # cross-compile for ICR-3232
+#   scripts/build-opendnp3.sh windows-mingw   # cross-compile for Windows x64
 #
 # Prereqs (host build):
 #   apt install cmake build-essential libssl-dev
 # Prereqs (ARMv7 cross):
 #   apt install cmake gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 #   plus an OpenSSL static build for armv7 (script will warn if missing).
+# Prereqs (Windows cross):
+#   apt install cmake g++-mingw-w64-x86-64
+#   (TLS is disabled — no MinGW OpenSSL needed; the sim uses plain TCP.)
 
 set -euo pipefail
 
@@ -53,8 +57,34 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 EOF
     TOOLCHAIN_ARGS=("-DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE}")
     ;;
+  windows-mingw)
+    TRIPLE="x86_64-w64-mingw32"
+    if ! command -v x86_64-w64-mingw32-g++ >/dev/null; then
+      echo "ERROR: x86_64-w64-mingw32-g++ not found." >&2
+      echo "  apt install g++-mingw-w64-x86-64" >&2
+      exit 1
+    fi
+    TOOLCHAIN_FILE="${WORK}/toolchain-mingw.cmake"
+    mkdir -p "${WORK}"
+    # ASIO (bundled in opendnp3) needs _WIN32_WINNT set, else it errors on the
+    # target Windows version. 0x0601 = Windows 7, opendnp3's documented floor.
+    cat > "${TOOLCHAIN_FILE}" <<EOF
+set(CMAKE_SYSTEM_NAME Windows)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
+set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
+set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+set(CMAKE_C_FLAGS_INIT "-D_WIN32_WINNT=0x0601")
+set(CMAKE_CXX_FLAGS_INIT "-D_WIN32_WINNT=0x0601")
+set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+EOF
+    TOOLCHAIN_ARGS=("-DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE}")
+    ;;
   *)
-    echo "ERROR: unknown target '${TARGET}' (use host | armv7-linux)" >&2
+    echo "ERROR: unknown target '${TARGET}' (use host | armv7-linux | windows-mingw)" >&2
     exit 1
     ;;
 esac

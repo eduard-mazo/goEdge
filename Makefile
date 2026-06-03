@@ -15,8 +15,10 @@ TLS_FLAGS = $(if $(strip $(TLS_CERT)),-tls-cert $(TLS_CERT) -tls-key $(TLS_KEY),
 # links into the Go binary; nothing extra to deploy on the target.
 DNP3_HOST_TRIPLE   ?= x86_64-unknown-linux-gnu
 DNP3_ARM_TRIPLE    ?= armv7-unknown-linux-gnueabihf
+DNP3_WIN_TRIPLE    ?= x86_64-w64-mingw32
 DNP3_HOST_DIR      := third_party/opendnp3/$(DNP3_HOST_TRIPLE)
 DNP3_ARM_DIR       := third_party/opendnp3/$(DNP3_ARM_TRIPLE)
+DNP3_WIN_DIR       := third_party/opendnp3/$(DNP3_WIN_TRIPLE)
 
 # The C++ shim (dnp3/opendnp3_c.cpp) is compiled by cgo; it needs the opendnp3
 # headers (CXXFLAGS) and the static libs + their TLS/stdc++/pthread deps (LDFLAGS).
@@ -46,9 +48,10 @@ ICR_ETC_DIR  ?= /root/etc
 ICR_LOG_DIR  ?= /root/log
 
 # Field-device simulators (see scripts/sim/README.md)
-SIM_DNP3_PORT   ?= 20100
-SIM_MODBUS_PORT ?= 1502
-SIM_DNP3_BIN    := /tmp/outstation_sim
+SIM_DNP3_PORT    ?= 20100
+SIM_MODBUS_PORT  ?= 1502
+SIM_DNP3_BIN     := /tmp/outstation_sim
+SIM_DNP3_WIN_BIN := outstation_sim.exe
 
 .PHONY: build build-ffi build-ffi-noembed build-ffi-icr \
         run run-ffi linux windows icr323x icr323x-ffi \
@@ -56,8 +59,9 @@ SIM_DNP3_BIN    := /tmp/outstation_sim
         web web-dev dev \
         image-icr323x image-save-icr323x \
         check-dnp3-host check-dnp3-arm check-arm-toolchain \
-        opendnp3-vendor opendnp3-vendor-arm \
-        sim-dnp3 sim-dnp3-build sim-modbus dev-cert \
+        check-dnp3-windows check-mingw-toolchain \
+        opendnp3-vendor opendnp3-vendor-arm opendnp3-vendor-windows \
+        sim-dnp3 sim-dnp3-build sim-dnp3-windows sim-modbus dev-cert \
         deploy-icr deploy-icr-ffi service-icr verify-arm \
         test clean
 
@@ -272,6 +276,20 @@ check-arm-toolchain:
 		exit 1; \
 	fi
 
+check-dnp3-windows:
+	@if [ ! -f $(DNP3_WIN_DIR)/include/opendnp3/DNP3Manager.h ] || [ ! -f $(DNP3_WIN_DIR)/lib/libopendnp3.a ]; then \
+		echo "ERROR: missing $(DNP3_WIN_DIR)/{include/opendnp3/DNP3Manager.h,lib/libopendnp3.a}"; \
+		echo "  Run: make opendnp3-vendor-windows"; \
+		exit 1; \
+	fi
+
+check-mingw-toolchain:
+	@if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then \
+		echo "ERROR: x86_64-w64-mingw32-g++ not found."; \
+		echo "  Install on Debian/Ubuntu: sudo apt install g++-mingw-w64-x86-64"; \
+		exit 1; \
+	fi
+
 # ── opendnp3 vendoring (Apache 2.0 DNP3 stack) ──────────────────────
 #
 # Run once per build host. Fetches opendnp3 source, builds static libs, and
@@ -288,6 +306,10 @@ opendnp3-vendor:
 
 opendnp3-vendor-arm:
 	bash scripts/build-opendnp3.sh armv7-linux
+
+# Cross-build opendnp3 for Windows x64 (MinGW-w64, TLS off). Feeds sim-dnp3-windows.
+opendnp3-vendor-windows:
+	bash scripts/build-opendnp3.sh windows-mingw
 
 # ── Field-device simulators (docs: scripts/sim/README.md) ────────────
 #
@@ -306,6 +328,20 @@ sim-dnp3-build: check-dnp3-host
 # Build + run the DNP3 outstation sim (outstation addr 1024, master addr 1).
 sim-dnp3: sim-dnp3-build
 	$(SIM_DNP3_BIN) $(SIM_DNP3_PORT)
+
+# Cross-compile the DNP3 outstation sim as a self-contained Windows .exe
+# (MinGW-w64 + the TLS-off Windows opendnp3, statically linked so it needs no
+# MinGW runtime DLLs on the target). Copy $(SIM_DNP3_WIN_BIN) to Windows and run
+# it there: `outstation_sim.exe 20100`. opendnp3's networking is ASIO/Winsock,
+# hence -lws2_32; -lwsock32; the C++ runtime + winpthread are pulled statically.
+sim-dnp3-windows: check-mingw-toolchain check-dnp3-windows
+	x86_64-w64-mingw32-g++ -std=c++17 -D_WIN32_WINNT=0x0601 \
+		-I$(DNP3_WIN_DIR)/include \
+		scripts/sim/outstation_sim.cpp $(DNP3_WIN_DIR)/lib/libopendnp3.a \
+		-static -static-libgcc -static-libstdc++ \
+		-lws2_32 -lwsock32 -lpthread \
+		-o $(SIM_DNP3_WIN_BIN)
+	@echo "built $(SIM_DNP3_WIN_BIN) — copy to Windows and run: $(SIM_DNP3_WIN_BIN) $(SIM_DNP3_PORT)"
 
 # Run the Modbus/TCP slave sim (pure Go; no opendnp3 needed).
 sim-modbus:
@@ -327,5 +363,5 @@ dev-cert:
 # ── Clean ────────────────────────────────────────────────────────────
 
 clean:
-	rm -f $(BINARY) $(BINARY).exe $(TARBALL_ICR) $(BINARY).init
+	rm -f $(BINARY) $(BINARY).exe $(TARBALL_ICR) $(BINARY).init $(SIM_DNP3_WIN_BIN)
 	rm -rf web/dist
