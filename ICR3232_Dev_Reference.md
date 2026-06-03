@@ -169,26 +169,42 @@ chmod +x /root/bin/watchdog_miapp.sh
 
 Crear `/etc/init.d/miapp`:
 
+> ⚠️ **Sin `start-stop-daemon`.** El BusyBox de este firmware **no** incluye el
+> applet `start-stop-daemon` (`start-stop-daemon: not found`). Gestionar el
+> proceso con `nohup` + PID file directamente, como abajo. `make service-icr`
+> genera exactamente este patrón.
+
 ```sh
 #!/bin/sh
 DAEMON=/root/bin/miapp
-PIDFILE=/root/run/miapp.pid
+RUNDIR=/root/run
+PIDFILE=$RUNDIR/miapp.pid
 LOG=/root/log/miapp.log
 
+running() {
+    [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
 start() {
-    mkdir -p /root/run /root/log
+    if running; then echo "miapp ya corriendo (PID $(cat "$PIDFILE"))"; return 0; fi
+    mkdir -p "$RUNDIR" /root/log
     echo "Iniciando miapp..."
-    start-stop-daemon -S -b \
-        --make-pidfile -p $PIDFILE \
-        -x $DAEMON \
-        -- >> $LOG 2>&1
-    echo "OK"
+    nohup "$DAEMON" >> "$LOG" 2>&1 &
+    echo $! > "$PIDFILE"
+    echo "OK (PID $(cat "$PIDFILE"))"
 }
 
 stop() {
     echo "Deteniendo miapp..."
-    start-stop-daemon -K -p $PIDFILE
-    rm -f $PIDFILE
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        kill "$PID" 2>/dev/null
+        i=0
+        while kill -0 "$PID" 2>/dev/null && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done
+        kill -9 "$PID" 2>/dev/null
+        rm -f "$PIDFILE"
+    fi
+    echo "OK"
 }
 
 case "$1" in
@@ -196,8 +212,8 @@ case "$1" in
     stop)    stop  ;;
     restart) stop; sleep 2; start ;;
     status)
-        if [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE) 2>/dev/null; then
-            echo "miapp corriendo (PID $(cat $PIDFILE))"
+        if running; then
+            echo "miapp corriendo (PID $(cat "$PIDFILE"))"
         else
             echo "miapp detenido"
         fi
