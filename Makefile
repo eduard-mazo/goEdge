@@ -34,6 +34,17 @@ DNP3_ARM_LDFLAGS   := -L$(CURDIR)/$(DNP3_ARM_DIR)/lib -lopendnp3 -l:libstdc++.a 
 IMAGE_ICR   ?= localhost/gomqttdnp3:icr323x
 TARBALL_ICR ?= goMqttDnp3-icr323x.tar
 
+# ── ICR-3232 device + deploy (see ICR3232_Dev_Reference.md) ──────────
+# The target is BusyBox-init (no systemd, no Docker, no package manager).
+# User apps + configs + logs live under /root, which persists via OverlayFS;
+# /opt is firmware-reserved and /tmp + /var are volatile. Override DEVICE
+# with the router IP, e.g. `make deploy-icr DEVICE=192.168.1.1`.
+DEVICE       ?= 192.168.1.1
+DEVICE_USER  ?= root
+ICR_BIN_DIR  ?= /root/bin
+ICR_ETC_DIR  ?= /root/etc
+ICR_LOG_DIR  ?= /root/log
+
 # Field-device simulators (see scripts/sim/README.md)
 SIM_DNP3_PORT   ?= 20100
 SIM_MODBUS_PORT ?= 1502
@@ -47,6 +58,7 @@ SIM_DNP3_BIN    := /tmp/outstation_sim
         check-dnp3-host check-dnp3-arm check-arm-toolchain \
         opendnp3-vendor opendnp3-vendor-arm \
         sim-dnp3 sim-dnp3-build sim-modbus dev-cert \
+        deploy-icr deploy-icr-ffi service-icr verify-arm \
         test clean
 
 # ── Stub builds (no DNP3 lib needed; emits no measurements) ──────────
@@ -64,7 +76,7 @@ windows: ui-build
 # Cross-compile (stub) for ICR-323x (linux/arm/v7) with embedded UI.
 icr323x: ui-build
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
-		go build -tags embed -trimpath -ldflags="-s -w" -o $(BINARY) .
+		go build -tags embed,icr -trimpath -ldflags="-s -w" -o $(BINARY) .
 
 # ── DNP3 FFI builds (require vendored opendnp3; run make opendnp3-vendor) ──
 
@@ -87,21 +99,117 @@ build-ffi-noembed: check-dnp3-host
 run-ffi: build-ffi
 	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG) $(TLS_FLAGS)
 
-# Cross-compile with real DNP3 master for ICR-323x. Static-links libopendnp3.a
-# (and libstdc++); the resulting binary is self-contained for DNP3.
+# Cross-compile with real DNP3 master for ICR-323x. Modbus + sysmon are pure-Go
+# (always in); the dnp3_ffi tag links the real opendnp3 master. We FULLY static-
+# link (-extldflags -static) because cgo otherwise pulls the build host's glibc
+# (Debian links GLIBC_2.38), which is far newer than the ICR firmware userland —
+# a dynamic binary would die with "GLIBC_2.xx not found". Static = self-contained,
+# runs on the device regardless of its glibc. netgo gives Go a pure-Go DNS resolver
+# so MQTT hostname lookups don't need glibc NSS. (A DNP3 outstation set by hostname
+# would still want glibc NSS via asio's getaddrinfo — configure outstations by IP.)
 icr323x-ffi: check-dnp3-arm check-arm-toolchain ui-build
 	CGO_ENABLED=1 GOOS=linux GOARCH=arm GOARM=7 \
 	CC=arm-linux-gnueabihf-gcc \
 	CXX=arm-linux-gnueabihf-g++ \
 	CGO_CXXFLAGS="$(DNP3_ARM_CXXFLAGS)" \
 	CGO_LDFLAGS="$(DNP3_ARM_LDFLAGS)" \
-	go build -tags embed,dnp3_ffi -trimpath -ldflags="-s -w" -o $(BINARY) .
+	go build -tags embed,dnp3_ffi,netgo,icr -trimpath -ldflags="-s -w -extldflags '-static'" -o $(BINARY) .
 	@echo ""
-	@echo "Deploy notes for $(BINARY) on ICR-3232:"
-	@echo "  scp $(BINARY)   root@ICR:/usr/local/bin/   # opendnp3 is static-linked; no .so needed"
+	@echo "Deploy notes for $(BINARY) on ICR-3232 (opendnp3 is static-linked; no .so needed):"
+	@echo "  make deploy-icr-ffi DEVICE=<ip>  # build, then print scp/ssh steps for $(ICR_BIN_DIR) / $(ICR_ETC_DIR)"
+	@echo "  make service-icr DEVICE=<ip>     # generate a BusyBox init.d service + print install steps"
 
 # Alias for consistency.
 build-ffi-icr: icr323x-ffi
+
+# ── ICR-3232 deploy (manual — these targets only build + print steps) ──
+#
+# The device has no package manager and we keep credentials out of the build:
+# deploy-icr / deploy-icr-ffi build a verified ARM binary, then PRINT the
+# scp/ssh commands to run by hand. Nothing is pushed automatically. Override
+# DEVICE=<ip> so the printed commands are copy-paste ready. deploy-icr uses the
+# pure-Go stub build (host telemetry, no field protocols); deploy-icr-ffi ships
+# the real DNP3 master. Target tree is the OverlayFS-persisted /root (§7).
+
+# Confirm the build really is a static ARM ELF before shipping (reference §6).
+verify-arm:
+	@file $(BINARY) | grep -q "ARM" || { echo "ERROR: $(BINARY) is not an ARM binary — build with 'make icr323x' first"; exit 1; }
+	@file $(BINARY) | grep -q "statically linked" || echo "WARN: $(BINARY) is not statically linked — check CGO/toolchain"
+	@file $(BINARY); ls -lh $(BINARY)
+
+define print_deploy_steps
+	@echo ""
+	@echo "Built $(BINARY) for ICR-3232. Copy it to the device by hand (/root persists via OverlayFS):"
+	@echo ""
+	@echo "  # 1. create dirs, then copy binary + config"
+	@echo "  ssh $(DEVICE_USER)@$(DEVICE) 'mkdir -p $(ICR_BIN_DIR) $(ICR_ETC_DIR) $(ICR_LOG_DIR)'"
+	@echo "  scp $(BINARY) $(DEVICE_USER)@$(DEVICE):$(ICR_BIN_DIR)/$(BINARY)"
+	@echo "  scp $(CONFIG) $(DEVICE_USER)@$(DEVICE):$(ICR_ETC_DIR)/$(BINARY).json"
+	@echo ""
+	@echo "  # 2. make executable + test run"
+	@echo "  ssh $(DEVICE_USER)@$(DEVICE) 'chmod +x $(ICR_BIN_DIR)/$(BINARY)'"
+	@echo "  ssh $(DEVICE_USER)@$(DEVICE) '$(ICR_BIN_DIR)/$(BINARY) -config $(ICR_ETC_DIR)/$(BINARY).json -port $(PORT) -log $(LOG)'"
+	@echo ""
+	@echo "  # 3. (optional) generate + install a boot service:  make service-icr"
+endef
+
+deploy-icr: icr323x verify-arm
+	$(print_deploy_steps)
+
+deploy-icr-ffi: icr323x-ffi verify-arm
+	$(print_deploy_steps)
+
+# Generate a BusyBox init.d service (start/stop/restart/status) so the gateway
+# survives reboots. service-icr only writes the script locally and prints the
+# manual install steps — nothing is copied to the device.
+define ICR_INITD
+#!/bin/sh
+# $(BINARY) — Modbus/DNP3 → MQTT Sparkplug B gateway (BusyBox init.d)
+# Generated by `make service-icr`; see ICR3232_Dev_Reference.md §5.
+DAEMON=$(ICR_BIN_DIR)/$(BINARY)
+PIDFILE=/root/run/$(BINARY).pid
+LOGFILE=$(ICR_LOG_DIR)/$(BINARY).log
+ARGS="-config $(ICR_ETC_DIR)/$(BINARY).json -port $(PORT) -log $(LOG)"
+
+start() {
+    mkdir -p /root/run $(ICR_LOG_DIR)
+    echo "Starting $(BINARY)..."
+    start-stop-daemon -S -b --make-pidfile -p $$PIDFILE -x $$DAEMON -- $$ARGS >> $$LOGFILE 2>&1
+    echo "OK"
+}
+stop() {
+    echo "Stopping $(BINARY)..."
+    start-stop-daemon -K -p $$PIDFILE
+    rm -f $$PIDFILE
+}
+case "$$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; sleep 2; start ;;
+    status)
+        if [ -f $$PIDFILE ] && kill -0 $$(cat $$PIDFILE) 2>/dev/null; then
+            echo "$(BINARY) running (PID $$(cat $$PIDFILE))"
+        else
+            echo "$(BINARY) stopped"
+        fi ;;
+    *) echo "Usage: $$0 {start|stop|restart|status}" ;;
+esac
+endef
+
+$(BINARY).init: Makefile
+	$(file >$@,$(ICR_INITD))
+	@echo "wrote $@"
+
+service-icr: $(BINARY).init
+	@echo ""
+	@echo "Wrote $(BINARY).init (BusyBox init.d service). Install it by hand:"
+	@echo ""
+	@echo "  scp $(BINARY).init $(DEVICE_USER)@$(DEVICE):/etc/init.d/$(BINARY)"
+	@echo "  ssh $(DEVICE_USER)@$(DEVICE) 'chmod +x /etc/init.d/$(BINARY)'"
+	@echo "  ssh $(DEVICE_USER)@$(DEVICE) '/etc/init.d/$(BINARY) start'"
+	@echo ""
+	@echo "  # start on boot: add this line to /etc/rc.local, before the final 'exit 0':"
+	@echo "      /etc/init.d/$(BINARY) start"
 
 # ── Run ──────────────────────────────────────────────────────────────
 
@@ -219,5 +327,5 @@ dev-cert:
 # ── Clean ────────────────────────────────────────────────────────────
 
 clean:
-	rm -f $(BINARY) $(BINARY).exe $(TARBALL_ICR)
+	rm -f $(BINARY) $(BINARY).exe $(TARBALL_ICR) $(BINARY).init
 	rm -rf web/dist

@@ -98,6 +98,7 @@ func (c *Collector) Collect(ts uint64) []*sparkplug.Metric {
 	c.collectNetwork(add)
 	c.collectTemperature(add)
 	c.collectHost(add)
+	c.collectVendor(add) // board sensors via vendor tools (ICR build only)
 
 	return ms
 }

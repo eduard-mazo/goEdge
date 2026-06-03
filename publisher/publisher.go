@@ -121,6 +121,10 @@ type bufferedMsg struct {
 // only sheds under sustained overload (which then shows up as Status.DroppedCount).
 const ingestQueueSize = 4096
 
+// connectTimeout bounds the initial MQTT connect so Start() can't block
+// indefinitely when the broker is unreachable (see Start).
+const connectTimeout = 10 * time.Second
+
 // New creates a Publisher from the current AppConfig.
 func New(cfg config.AppConfig) *Publisher {
 	p := &Publisher{
@@ -203,8 +207,19 @@ func (p *Publisher) Start(ctx context.Context) error {
 
 	client := mqtt.NewClient(opts)
 	token := client.Connect()
-	token.Wait()
+	// Bound the initial connect: with ConnectRetry(true) the token never
+	// completes until a broker is reached, so a plain Wait() blocks forever when
+	// the broker is down. WaitTimeout returning false means "not connected yet";
+	// tear the client down (stopping its background retry loop) and fail fast so
+	// the caller — e.g. POST /api/gateway/start — gets a response instead of
+	// hanging. Once started, auto-reconnect still recovers from later drops.
+	if !token.WaitTimeout(connectTimeout) {
+		client.Disconnect(0)
+		p.running.Store(false)
+		return fmt.Errorf("MQTT connect %s: timed out after %s", mq.Broker, connectTimeout)
+	}
 	if err := token.Error(); err != nil {
+		client.Disconnect(0)
 		p.running.Store(false)
 		return fmt.Errorf("MQTT connect %s: %w", mq.Broker, err)
 	}

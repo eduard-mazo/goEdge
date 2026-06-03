@@ -11,6 +11,7 @@ import (
 
 	"goMqttDnp3/config"
 	"goMqttDnp3/publisher"
+	"goMqttDnp3/sysmon"
 )
 
 // Gateway is the interface that api handlers call into.
@@ -74,6 +75,7 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/api/config/mqtt", s.handleMQTT)
 	s.mux.HandleFunc("/api/config/sparkplug", s.handleSparkplug)
 	s.mux.HandleFunc("/api/config/system", s.handleSystem)
+	s.mux.HandleFunc("/api/system/telemetry", s.handleSystemTelemetry)
 
 	s.mux.HandleFunc("/api/outstations", s.handleOutstations)
 	s.mux.HandleFunc("/api/outstations/", s.handleOutstation)
@@ -198,6 +200,30 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeFail(w, http.StatusMethodNotAllowed, "GET or PUT")
 	}
+}
+
+// handleSystemTelemetry samples host telemetry on demand and returns it as a
+// flat metric-name → value map. It runs the same collector the publisher uses,
+// but reads /proc and /sys directly, so it works even when the gateway is
+// stopped or the MQTT broker is unreachable — a fallback view of the device
+// when nothing is reaching the broker.
+func (s *Server) handleSystemTelemetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeFail(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	cfg := s.gw.store.Get().System
+	metrics := sysmon.New(cfg).Collect(uint64(time.Now().UnixMilli()))
+	values := make(map[string]float64, len(metrics))
+	for _, m := range metrics {
+		if m.DoubleValue != nil {
+			values[m.Name] = *m.DoubleValue
+		}
+	}
+	writeOK(w, map[string]any{
+		"time":    time.Now().UTC().Format(time.RFC3339),
+		"metrics": values,
+	})
 }
 
 // --- Outstations ---

@@ -42,8 +42,8 @@
     "enabled": true,
     "intervalMs": 5000,
     "metricPrefix": "System/",
-    "mounts": ["/"],
-    "interfaces": [],
+    "mounts": ["/", "/opt", "/var/data"],
+    "interfaces": ["usb0", "eth0", "eth1"],
     "tempSensorKey": "",
     "metrics": {
       "cpu": true, "load": true, "memory": true, "swap": true, "disk": true,

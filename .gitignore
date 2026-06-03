@@ -23,6 +23,9 @@
 # Container artifacts
 *.tar
 
+# Generated init.d service script (made by `make service-icr`)
+*.init
+
 # OS / editor / agent
 .DS_Store
 *.swp
