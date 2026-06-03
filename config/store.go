@@ -24,11 +24,21 @@ func NewStore(path string) (*Store, error) {
 	return s, nil
 }
 
-// Get returns a copy of the current config.
+// Get returns a deep copy of the current config. The slices are cloned so a
+// caller iterating the result can't race with a concurrent mutator (Upsert/
+// Delete reuse the backing arrays under the write lock); the element structs
+// hold only scalars/strings, so a shallow element copy is a full copy.
 func (s *Store) Get() AppConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg
+	c := s.cfg
+	c.Outstations = append([]DNP3Outstation(nil), c.Outstations...)
+	c.ModbusDevices = append([]ModbusDevice(nil), c.ModbusDevices...)
+	c.Mappings = append([]SignalMapping(nil), c.Mappings...)
+	c.System.Mounts = append([]string(nil), c.System.Mounts...)
+	c.System.Interfaces = append([]string(nil), c.System.Interfaces...)
+	c.System.DisabledMetrics = append([]string(nil), c.System.DisabledMetrics...)
+	return c
 }
 
 // Set replaces the config and persists it.

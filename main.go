@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"goMqttDnp3/api"
 	"goMqttDnp3/config"
@@ -46,24 +49,38 @@ func main() {
 	}
 	slog.Info("goMqttDnp3 gateway", "addr", scheme+"://localhost"+addr, "config", *cfgPath, "tls", useTLS)
 
+	// ReadHeaderTimeout bounds slow-header (Slowloris) clients; the WebSocket is
+	// hijacked after upgrade, so these request-level timeouts don't constrain it.
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           srv,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
 	go func() {
 		<-quit
 		slog.Info("shutting down")
-		os.Exit(0)
+		srv.Close() // stop the publisher → NDEATH + clean MQTT disconnect
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(ctx); err != nil {
+			slog.Warn("http shutdown", "err", err)
+		}
 	}()
 
 	// crypto/tls is pure Go (no OpenSSL), so HTTPS here cross-compiles to the
 	// ICR-3232 (linux/arm/v7) with no extra native dependency.
 	var serveErr error
 	if useTLS {
-		serveErr = http.ListenAndServeTLS(addr, *tlsCert, *tlsKey, srv)
+		serveErr = httpServer.ListenAndServeTLS(*tlsCert, *tlsKey)
 	} else {
-		serveErr = http.ListenAndServe(addr, srv)
+		serveErr = httpServer.ListenAndServe()
 	}
-	if serveErr != nil {
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 		slog.Error("http server", "err", serveErr)
 		os.Exit(1)
 	}

@@ -32,10 +32,6 @@ DNP3_ARM_CXXFLAGS  := -std=c++17 -I$(CURDIR)/$(DNP3_ARM_DIR)/include
 # To enable secure DNP3 later: vendor with an armhf OpenSSL and add -lssl -lcrypto.
 DNP3_ARM_LDFLAGS   := -L$(CURDIR)/$(DNP3_ARM_DIR)/lib -lopendnp3 -l:libstdc++.a -lpthread -lm -ldl -static-libgcc
 
-# Container
-IMAGE_ICR   ?= localhost/gomqttdnp3:icr323x
-TARBALL_ICR ?= goMqttDnp3-icr323x.tar
-
 # ── ICR-3232 device + deploy (see ICR3232_Dev_Reference.md) ──────────
 # The target is BusyBox-init (no systemd, no Docker, no package manager).
 # User apps + configs + logs live under /root, which persists via OverlayFS;
@@ -53,11 +49,11 @@ SIM_MODBUS_PORT  ?= 1502
 SIM_DNP3_BIN     := /tmp/outstation_sim
 SIM_DNP3_WIN_BIN := outstation_sim.exe
 
-.PHONY: build build-ffi build-ffi-noembed build-ffi-icr \
+.DEFAULT_GOAL := help
+
+.PHONY: help build build-ffi build-ffi-noembed \
         run run-ffi linux windows icr323x icr323x-ffi \
         ui-install ui-build ui-dev \
-        web web-dev dev \
-        image-icr323x image-save-icr323x \
         check-dnp3-host check-dnp3-arm check-arm-toolchain \
         check-dnp3-windows check-mingw-toolchain \
         opendnp3-vendor opendnp3-vendor-arm opendnp3-vendor-windows \
@@ -65,20 +61,29 @@ SIM_DNP3_WIN_BIN := outstation_sim.exe
         deploy-icr deploy-icr-ffi service-icr verify-arm \
         test clean
 
+# Print the documented targets (lines tagged with "## " after the target name).
+help:
+	@echo "goMqttDnp3 — Modbus/DNP3 → MQTT Sparkplug B gateway"
+	@echo
+	@echo "Usage: make <target>   (vars: PORT, CONFIG, LOG, DEVICE, TLS_CERT/TLS_KEY)"
+	@echo
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
+		| sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
 # ── Stub builds (no DNP3 lib needed; emits no measurements) ──────────
 
 # Default dev build: pure Go, default stub master.
-build:
+build: ## Dev build (pure Go, stub DNP3 master, no UI embed)
 	go build -o $(BINARY) .
 
-linux:
+linux: ## Static linux/amd64 build with embedded UI
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embed -trimpath -ldflags="-s -w" -o $(BINARY) .
 
-windows: ui-build
+windows: ui-build ## Static windows/amd64 build with embedded UI
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags embed -trimpath -ldflags="-s -w" -o $(BINARY) .
 
 # Cross-compile (stub) for ICR-323x (linux/arm/v7) with embedded UI.
-icr323x: ui-build
+icr323x: ui-build ## Cross-build (stub) for ICR-323x arm/v7 + embedded UI
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
 		go build -tags embed,icr -trimpath -ldflags="-s -w" -o $(BINARY) .
 
@@ -86,7 +91,7 @@ icr323x: ui-build
 
 # Host build with real DNP3 master + embedded UI (so browsing / serves the SPA).
 # For dev with hot-reload, use `make build-ffi-noembed` alongside `make ui-dev`.
-build-ffi: check-dnp3-host ui-build
+build-ffi: check-dnp3-host ui-build ## Host build with real opendnp3 DNP3 master + UI
 	CGO_ENABLED=1 \
 	CGO_CXXFLAGS="$(DNP3_HOST_CXXFLAGS)" \
 	CGO_LDFLAGS="$(DNP3_HOST_LDFLAGS)" \
@@ -94,13 +99,13 @@ build-ffi: check-dnp3-host ui-build
 
 # Same as build-ffi but without the embed tag; serves no static files at /.
 # Use with `make ui-dev` (Vite on :5173 proxies API calls to :8080).
-build-ffi-noembed: check-dnp3-host
+build-ffi-noembed: check-dnp3-host ## Host DNP3 build without UI embed (use with ui-dev)
 	CGO_ENABLED=1 \
 	CGO_CXXFLAGS="$(DNP3_HOST_CXXFLAGS)" \
 	CGO_LDFLAGS="$(DNP3_HOST_LDFLAGS)" \
 	go build -tags dnp3_ffi -trimpath -o $(BINARY) .
 
-run-ffi: build-ffi
+run-ffi: build-ffi ## Build (real DNP3) and run the gateway
 	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG) $(TLS_FLAGS)
 
 # Cross-compile with real DNP3 master for ICR-323x. Modbus + sysmon are pure-Go
@@ -111,7 +116,7 @@ run-ffi: build-ffi
 # runs on the device regardless of its glibc. netgo gives Go a pure-Go DNS resolver
 # so MQTT hostname lookups don't need glibc NSS. (A DNP3 outstation set by hostname
 # would still want glibc NSS via asio's getaddrinfo — configure outstations by IP.)
-icr323x-ffi: check-dnp3-arm check-arm-toolchain ui-build
+icr323x-ffi: check-dnp3-arm check-arm-toolchain ui-build ## Cross-build (real DNP3) static binary for ICR-323x
 	CGO_ENABLED=1 GOOS=linux GOARCH=arm GOARM=7 \
 	CC=arm-linux-gnueabihf-gcc \
 	CXX=arm-linux-gnueabihf-g++ \
@@ -123,9 +128,6 @@ icr323x-ffi: check-dnp3-arm check-arm-toolchain ui-build
 	@echo "  make deploy-icr-ffi DEVICE=<ip>  # build, then print scp/ssh steps for $(ICR_BIN_DIR) / $(ICR_ETC_DIR)"
 	@echo "  make service-icr DEVICE=<ip>     # generate a BusyBox init.d service + print install steps"
 
-# Alias for consistency.
-build-ffi-icr: icr323x-ffi
-
 # ── ICR-3232 deploy (manual — these targets only build + print steps) ──
 #
 # The device has no package manager and we keep credentials out of the build:
@@ -136,7 +138,7 @@ build-ffi-icr: icr323x-ffi
 # the real DNP3 master. Target tree is the OverlayFS-persisted /root (§7).
 
 # Confirm the build really is a static ARM ELF before shipping (reference §6).
-verify-arm:
+verify-arm: ## Assert the binary is a static ARM ELF
 	@file $(BINARY) | grep -q "ARM" || { echo "ERROR: $(BINARY) is not an ARM binary — build with 'make icr323x' first"; exit 1; }
 	@file $(BINARY) | grep -q "statically linked" || echo "WARN: $(BINARY) is not statically linked — check CGO/toolchain"
 	@file $(BINARY); ls -lh $(BINARY)
@@ -157,10 +159,10 @@ define print_deploy_steps
 	@echo "  # 3. (optional) generate + install a boot service:  make service-icr"
 endef
 
-deploy-icr: icr323x verify-arm
+deploy-icr: icr323x verify-arm ## Build (stub) + print ICR deploy steps
 	$(print_deploy_steps)
 
-deploy-icr-ffi: icr323x-ffi verify-arm
+deploy-icr-ffi: icr323x-ffi verify-arm ## Build (real DNP3) + print ICR deploy steps
 	$(print_deploy_steps)
 
 # Generate a BusyBox init.d service (start/stop/restart/status) so the gateway
@@ -223,7 +225,7 @@ $(BINARY).init: Makefile
 	$(file >$@,$(ICR_INITD))
 	@echo "wrote $@"
 
-service-icr: $(BINARY).init
+service-icr: $(BINARY).init ## Generate a BusyBox init.d service + install steps
 	@echo ""
 	@echo "Wrote $(BINARY).init (BusyBox init.d service). Install it by hand:"
 	@echo ""
@@ -236,41 +238,25 @@ service-icr: $(BINARY).init
 
 # ── Run ──────────────────────────────────────────────────────────────
 
-run: ui-build
+run: ui-build ## Build (embedded UI) and run the gateway
 	go build -tags embed -o $(BINARY) .
 	./$(BINARY) -port $(PORT) -config $(CONFIG) -log $(LOG) $(TLS_FLAGS)
 
-web: run
-
-web-dev: build
-	./$(BINARY) -port $(PORT) -config $(CONFIG) -log debug
-
-dev: web-dev
-
 # ── Tests ────────────────────────────────────────────────────────────
 
-test:
+test: ## Run the Go test suite
 	go test ./...
 
 # ── Vue frontend ─────────────────────────────────────────────────────
 
-ui-install:
+ui-install: ## Install frontend deps (pnpm)
 	cd web && pnpm install
 
-ui-build:
+ui-build: ## Build the Vue frontend into web/dist
 	cd web && pnpm run build
 
-ui-dev:
+ui-dev: ## Run the Vite dev server (hot reload)
 	cd web && pnpm run dev
-
-# ── Container (ICR-323x, linux/arm/v7) ──────────────────────────────
-
-image-icr323x: ui-build icr323x-ffi
-	docker build --platform linux/arm/v7 -t $(IMAGE_ICR) .
-
-image-save-icr323x: image-icr323x
-	docker save $(IMAGE_ICR) -o $(TARBALL_ICR)
-	@echo "Saved $(IMAGE_ICR) → $(TARBALL_ICR)"
 
 # ── Preflight checks ─────────────────────────────────────────────────
 
@@ -320,14 +306,14 @@ check-mingw-toolchain:
 # and OPENSSL_ROOT_DIR pointing at a static armv7 OpenSSL build (or accept
 # the TLS-off fallback).
 
-opendnp3-vendor:
+opendnp3-vendor: ## Vendor opendnp3 static libs for the host
 	bash scripts/build-opendnp3.sh host
 
-opendnp3-vendor-arm:
+opendnp3-vendor-arm: ## Vendor opendnp3 static libs for ICR-323x arm/v7
 	bash scripts/build-opendnp3.sh armv7-linux
 
 # Cross-build opendnp3 for Windows x64 (MinGW-w64, TLS off). Feeds sim-dnp3-windows.
-opendnp3-vendor-windows:
+opendnp3-vendor-windows: ## Vendor opendnp3 static libs for Windows x64
 	bash scripts/build-opendnp3.sh windows-mingw
 
 # ── Field-device simulators (docs: scripts/sim/README.md) ────────────
@@ -345,7 +331,7 @@ sim-dnp3-build: check-dnp3-host
 	@echo "built $(SIM_DNP3_BIN)"
 
 # Build + run the DNP3 outstation sim (outstation addr 1024, master addr 1).
-sim-dnp3: sim-dnp3-build
+sim-dnp3: sim-dnp3-build ## Build + run the DNP3 outstation simulator
 	$(SIM_DNP3_BIN) $(SIM_DNP3_PORT)
 
 # Cross-compile the DNP3 outstation sim as a self-contained Windows .exe
@@ -353,7 +339,7 @@ sim-dnp3: sim-dnp3-build
 # MinGW runtime DLLs on the target). Copy $(SIM_DNP3_WIN_BIN) to Windows and run
 # it there: `outstation_sim.exe 20100`. opendnp3's networking is ASIO/Winsock,
 # hence -lws2_32; -lwsock32; the C++ runtime + winpthread are pulled statically.
-sim-dnp3-windows: check-mingw-toolchain check-dnp3-windows
+sim-dnp3-windows: check-mingw-toolchain check-dnp3-windows ## Cross-build the DNP3 sim as a Windows .exe
 	x86_64-w64-mingw32-g++ -std=c++17 -D_WIN32_WINNT=0x0601 \
 		-I$(DNP3_WIN_DIR)/include \
 		scripts/sim/outstation_sim.cpp $(DNP3_WIN_DIR)/lib/libopendnp3.a \
@@ -363,7 +349,7 @@ sim-dnp3-windows: check-mingw-toolchain check-dnp3-windows
 	@echo "built $(SIM_DNP3_WIN_BIN) — copy to Windows and run: $(SIM_DNP3_WIN_BIN) $(SIM_DNP3_PORT)"
 
 # Run the Modbus/TCP slave sim (pure Go; no opendnp3 needed).
-sim-modbus:
+sim-modbus: ## Run the Modbus/TCP slave simulator (pure Go)
 	go run ./scripts/sim/modbusslave $(SIM_MODBUS_PORT)
 
 # ── TLS helper ───────────────────────────────────────────────────────
@@ -373,7 +359,7 @@ sim-modbus:
 # warning-free cert use mkcert or your internal CA — the SAN must list the
 # host you browse to. Override the name via TLS_HOST.
 TLS_HOST ?= localhost
-dev-cert:
+dev-cert: ## Generate a throwaway self-signed TLS cert
 	openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 \
 		-subj "/CN=$(TLS_HOST)" \
 		-addext "subjectAltName=DNS:$(TLS_HOST),DNS:localhost,IP:127.0.0.1"
@@ -381,6 +367,6 @@ dev-cert:
 
 # ── Clean ────────────────────────────────────────────────────────────
 
-clean:
-	rm -f $(BINARY) $(BINARY).exe $(TARBALL_ICR) $(BINARY).init $(SIM_DNP3_WIN_BIN)
+clean: ## Remove build artifacts
+	rm -f $(BINARY) $(BINARY).exe $(BINARY).init $(SIM_DNP3_WIN_BIN)
 	rm -rf web/dist

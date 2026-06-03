@@ -1,5 +1,7 @@
 package config
 
+import "strconv"
+
 // AppConfig is the top-level persisted configuration.
 //
 // Sources are split by protocol: Outstations (DNP3) and ModbusDevices. Each
@@ -92,7 +94,7 @@ func (d ModbusDevice) Addr() string {
 	if port == 0 {
 		port = 502
 	}
-	return d.Host + ":" + itoa(port)
+	return d.Host + ":" + strconv.Itoa(port)
 }
 
 // MQTTConfig holds broker connection parameters.
@@ -174,21 +176,7 @@ func (d DNP3Outstation) Addr() string {
 	if port == 0 {
 		port = 20000
 	}
-	return d.Host + ":" + itoa(port)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	buf := [10]byte{}
-	pos := len(buf)
-	for n > 0 {
-		pos--
-		buf[pos] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[pos:])
+	return d.Host + ":" + strconv.Itoa(port)
 }
 
 // SignalMapping maps a DNP3 point to a Sparkplug B metric.

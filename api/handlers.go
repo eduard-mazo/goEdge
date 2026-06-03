@@ -54,6 +54,14 @@ func NewServer(store *config.Store, hub *Hub, staticFS http.Handler) *Server {
 	return s
 }
 
+// Close stops the running publisher (sending NDEATH and disconnecting MQTT) if
+// one is active. Call during graceful shutdown so the broker sees a clean death.
+func (s *Server) Close() {
+	if s.gw.pub != nil {
+		s.gw.pub.Stop()
+	}
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")

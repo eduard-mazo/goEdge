@@ -1,7 +1,5 @@
 package api
 
-import "time"
-
 // APIResponse is the standard HTTP response envelope.
 type APIResponse struct {
 	Success bool        `json:"success"`
@@ -17,9 +15,8 @@ type WSEvent struct {
 
 // WebSocket event type constants.
 const (
-	EventLog      = "log"
-	EventStatus   = "status"
-	EventReadings = "readings"
+	EventLog    = "log"
+	EventStatus = "status"
 )
 
 // LogEntry is a structured log message for the UI console.
@@ -27,11 +24,4 @@ type LogEntry struct {
 	Level   string `json:"level"` // info | warn | error
 	Message string `json:"message"`
 	Time    string `json:"time"`
-}
-
-// ReadingSnapshot is a single metric value pushed to the UI.
-type ReadingSnapshot struct {
-	Metric    string    `json:"metric"`
-	Value     float64   `json:"value"`
-	Timestamp time.Time `json:"timestamp"`
 }

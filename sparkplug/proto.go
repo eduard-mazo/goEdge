@@ -165,29 +165,6 @@ func (p *Payload) Marshal() []byte {
 	return b
 }
 
-// StringPropertySet builds a PropertySet from an ordered list of key/value pairs.
-// Keys with empty values are omitted. Order determines wire order (important for
-// readers that zip keys[] with values[] positionally).
-func StringPropertySet(keys []string, vals map[string]string) *PropertySet {
-	ps := &PropertySet{}
-	for _, k := range keys {
-		v, ok := vals[k]
-		if !ok || v == "" {
-			continue
-		}
-		sv := v
-		ps.Keys = append(ps.Keys, k)
-		ps.Values = append(ps.Values, &PropertyValue{
-			Type:        DataTypeString,
-			StringValue: &sv,
-		})
-	}
-	if len(ps.Keys) == 0 {
-		return nil
-	}
-	return ps
-}
-
 func (m *Metric) marshal() []byte {
 	var b []byte
 	if m.Name != "" {
