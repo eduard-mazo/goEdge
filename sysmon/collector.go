@@ -91,6 +91,12 @@ func (c *Collector) Collect(ts uint64) []*sparkplug.Metric {
 		}
 		ms = append(ms, sparkplug.MetricDouble(c.prefix+name, ts, v))
 	}
+	addStr := func(name, v string) {
+		if v == "" || c.disabled[name] {
+			return
+		}
+		ms = append(ms, sparkplug.MetricString(c.prefix+name, ts, v))
+	}
 
 	c.collectCPU(add)
 	c.collectMemory(add)
@@ -98,7 +104,7 @@ func (c *Collector) Collect(ts uint64) []*sparkplug.Metric {
 	c.collectNetwork(add)
 	c.collectTemperature(add)
 	c.collectHost(add)
-	c.collectVendor(add) // board sensors via vendor tools (ICR build only)
+	c.collectVendor(add, addStr) // board sensors + identity (ICR build only)
 
 	return ms
 }

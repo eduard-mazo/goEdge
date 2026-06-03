@@ -11,19 +11,38 @@ import (
 )
 
 // statusCmd is the Advantech firmware tool that prints the device status panel.
-// `status sys` lists the board sensors gopsutil cannot read on this hardware
-// (temperature, supply voltage, RTC battery) in a "Label : value" format.
+// `status -v sys` is the verbose system view; it carries the board sensors
+// gopsutil cannot read on this hardware (temperature, supply voltage, RTC
+// battery) plus the device identity, all in a "Label : value" format.
 const statusCmd = "/usr/bin/status"
 
-// collectVendor augments the gopsutil sample with ICR-323x board sensors by
-// shelling out to `status sys` once per tick. It is compiled only into the
-// on-device build (-tags icr). A missing/slow tool is skipped (warned once)
-// rather than blocking the collector — the rest of the batch still publishes.
-func (c *Collector) collectVendor(add func(string, float64)) {
+// statusArgs selects the verbose system panel. Verbose is required for the
+// identity fields (Product Type, Product Name, Hardware UUID).
+var statusArgs = []string{"-v", "sys"}
+
+// vendorIdentity maps the `status -v sys` identity labels we publish to their
+// metric suffix. CPU/memory/disk/etc. are deliberately excluded: those come
+// from gopsutil, which is cheaper and consistent across builds. These values
+// are static, so they ride along in the same panel read we do for the sensors.
+var vendorIdentity = []struct{ label, suffix string }{
+	{"Part Number", "Device/PartNumber"},
+	{"Product Type", "Device/ProductType"},
+	{"Product Name", "Device/ProductName"},
+	{"Firmware Version", "Device/Firmware"},
+	{"Serial Number", "Device/Serial"},
+	{"Hardware UUID", "Device/UUID"},
+}
+
+// collectVendor augments the gopsutil sample with ICR-323x board sensors and
+// device identity by shelling out to `status -v sys` once per tick. It is
+// compiled only into the on-device build (-tags icr). A missing/slow tool is
+// skipped (warned once) rather than blocking the collector — the rest of the
+// batch still publishes.
+func (c *Collector) collectVendor(add func(string, float64), addStr func(string, string)) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, statusCmd, "sys").Output()
+	out, err := exec.CommandContext(ctx, statusCmd, statusArgs...).Output()
 	if err != nil {
 		c.warn("icr-status", err)
 		return
@@ -33,7 +52,7 @@ func (c *Collector) collectVendor(add func(string, float64)) {
 	// Temperature shares the standard suffix so it slots into the same metric
 	// the publisher already expects; gated by the Temperature group toggle.
 	if c.sel.Temperature {
-		if v, ok := leadingFloat(fields["Temperature"]); ok { // e.g. "42 C"
+		if v, ok := leadingFloat(fields["Temperature"]); ok { // e.g. "41 C"
 			add("Temperature/CPU_C", round2(v))
 		}
 	}
@@ -46,10 +65,17 @@ func (c *Collector) collectVendor(add func(string, float64)) {
 	if s, ok := fields["RTC Battery"]; ok { // "Ok" / "Low" / ...
 		add("Power/RTC_Battery_OK", boolFloat(strings.EqualFold(strings.TrimSpace(s), "Ok")))
 	}
+
+	// Device identity (static strings). addStr skips empty values and honors
+	// DisabledMetrics, so absent fields and opt-outs drop out cleanly.
+	for _, id := range vendorIdentity {
+		addStr(id.suffix, fields[id.label])
+	}
 }
 
 // parseStatusPanel splits "Label : value" lines into a map keyed by the trimmed
-// label. Labels are right-padded with spaces, so both sides are trimmed.
+// label. Labels are right-padded with spaces, so both sides are trimmed. Only
+// the first ":" splits, so values containing colons (e.g. UUIDs) stay intact.
 func parseStatusPanel(out string) map[string]string {
 	fields := make(map[string]string)
 	for _, line := range strings.Split(out, "\n") {
@@ -62,7 +88,7 @@ func parseStatusPanel(out string) map[string]string {
 	return fields
 }
 
-// leadingFloat parses the numeric prefix of a value like "42 C" or "12.1 V".
+// leadingFloat parses the numeric prefix of a value like "41 C" or "12.1 V".
 func leadingFloat(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, ' '); i > 0 {

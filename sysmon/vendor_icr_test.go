@@ -6,21 +6,31 @@ import "testing"
 
 func TestParseStatusPanel(t *testing.T) {
 	out := `Part Number        : ICR-3232
+Product Type       : ICR-3232
+Product Name       : ICR-323x
+Firmware Version   : 6.6.1 (2026-04-24)
+Serial Number      : ACZ1100002518501
+Hardware UUID      : 47519ee2-ae5a-11ec-8856-000a148e9bb6
 RTC Battery        : Ok
 Supply Voltage     : 12.1 V
-Temperature        : 42 C
-Uptime             : 0 days, 2 hours, 12 minutes`
+Temperature        : 41 C
+Time               : 2026-06-02 21:50:31`
 
 	f := parseStatusPanel(out)
-	if f["Part Number"] != "ICR-3232" {
-		t.Errorf("Part Number = %q", f["Part Number"])
+	want := map[string]string{
+		"Part Number":      "ICR-3232",
+		"Product Name":     "ICR-323x",
+		"Firmware Version": "6.6.1 (2026-04-24)",
+		"Hardware UUID":    "47519ee2-ae5a-11ec-8856-000a148e9bb6",
+		"RTC Battery":      "Ok",
+		"Temperature":      "41 C",
+		// Value has colons (HH:MM:SS) — only the first ":" splits.
+		"Time": "2026-06-02 21:50:31",
 	}
-	if f["RTC Battery"] != "Ok" {
-		t.Errorf("RTC Battery = %q", f["RTC Battery"])
-	}
-	// "Uptime" value contains colons in the time — Cut on the first ":" only.
-	if f["Temperature"] != "42 C" {
-		t.Errorf("Temperature = %q", f["Temperature"])
+	for k, v := range want {
+		if f[k] != v {
+			t.Errorf("%s = %q; want %q", k, f[k], v)
+		}
 	}
 }
 
