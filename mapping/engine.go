@@ -95,6 +95,43 @@ func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 	return Result{Value: value, Metric: metric, IsNull: !m.Quality.Good()}, nil
 }
 
+// BirthMetric returns a zero-valued metric declaring sig's name and the
+// datatype it will carry in NDATA/DDATA. NBIRTH/DBIRTH must declare each metric
+// with the SAME datatype it later sends (Sparkplug B §6.4.4) — otherwise a
+// consumer that takes the datatype from the birth (and decodes data by alias)
+// mis-reads the value. The type selection here mirrors Apply exactly.
+func BirthMetric(sig config.SignalMapping, ts uint64) *sparkplug.Metric {
+	name := sig.MetricName
+	if sig.IsModbus() {
+		switch sig.Function {
+		case "coil", "discrete_input":
+			return sparkplug.MetricBool(name, ts, false)
+		default: // input/holding register → engineering double
+			return sparkplug.MetricDouble(name, ts, 0)
+		}
+	}
+	switch source.PointType(sig.PointType) {
+	case source.PointBinary, source.PointBinaryOutputStatus:
+		return sparkplug.MetricBool(name, ts, false)
+	case source.PointDoubleBitBinary:
+		return sparkplug.MetricUInt32(name, ts, 0)
+	case source.PointCounter, source.PointFrozenCounter:
+		// Apply keeps the raw uint32 only when there is no scale/offset.
+		scale := sig.Scale
+		if scale == 0 {
+			scale = 1.0
+		}
+		if scale == 1.0 && sig.Offset == 0 {
+			return sparkplug.MetricUInt32(name, ts, 0)
+		}
+		return sparkplug.MetricDouble(name, ts, 0)
+	case source.PointOctetString:
+		return sparkplug.MetricString(name, ts, "")
+	default: // analog, analog_output_status, and any unknown → double
+		return sparkplug.MetricDouble(name, ts, 0)
+	}
+}
+
 // qualityProperties packs DNP3 flags into a Sparkplug PropertySet so the
 // receiving SCADA can interpret point quality without out-of-band knowledge.
 func qualityProperties(q source.Quality, engUnit string) *sparkplug.PropertySet {

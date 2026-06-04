@@ -629,7 +629,7 @@ func (p *Publisher) buildBirthMetrics() []*sparkplug.Metric {
 		if !sig.Enabled || sig.DeviceID != "" {
 			continue
 		}
-		metrics = append(metrics, sparkplug.MetricDouble(sig.MetricName, ts, 0))
+		metrics = append(metrics, mapping.BirthMetric(sig, ts))
 	}
 	// Declare system metrics in NBIRTH so they alias-compress in NDATA. This also
 	// primes the collector's network-rate baseline.
@@ -646,7 +646,7 @@ func (p *Publisher) publishDBirths() {
 		if !sig.Enabled || sig.DeviceID == "" {
 			continue
 		}
-		devMetrics[sig.DeviceID] = append(devMetrics[sig.DeviceID], sparkplug.MetricDouble(sig.MetricName, ts, 0))
+		devMetrics[sig.DeviceID] = append(devMetrics[sig.DeviceID], mapping.BirthMetric(sig, ts))
 	}
 	for devID, metrics := range devMetrics {
 		if err := p.node.PublishDBirth(p.client, devID, metrics); err != nil {
