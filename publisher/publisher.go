@@ -19,10 +19,13 @@ package publisher
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -189,8 +192,23 @@ func (p *Publisher) Start(ctx context.Context) error {
 	// lifetime, which Sparkplug needs for bdSeq continuity across reconnects.
 	clientID := fmt.Sprintf("%s-%d", mq.ClientID, os.Getpid())
 
+	// paho selects its transport from the broker URL scheme, so when TLS is
+	// enabled coerce tcp:// → ssl://. crypto/tls is pure Go and cross-compiles
+	// to the static ICR-3232 (linux/arm/v7) build with no native dependency.
+	broker := mq.Broker
+	if mq.TLS.Enabled {
+		broker = forceTLSScheme(broker)
+	}
+
 	p.node = sparkplug.NewNode(sp.GroupID, sp.NodeID)
-	opts := p.node.NewClientOptions(mq.Broker, clientID, mq.Username, mq.Password)
+	opts := p.node.NewClientOptions(broker, clientID, mq.Username, mq.Password)
+	if mq.TLS.Enabled {
+		tlsCfg, err := mqttTLSConfig(mq.TLS)
+		if err != nil {
+			return fmt.Errorf("mqtt tls: %w", err)
+		}
+		opts.SetTLSConfig(tlsCfg)
+	}
 	// Auto-reconnect on broker drop. Without this, an MQTT blip strands the
 	// gateway with a live DNP3 master but no publish path; the offline buffer
 	// drains once MQTT comes back.
@@ -667,4 +685,50 @@ func (p *Publisher) logWarn(msg string) {
 	if p.LogSink != nil {
 		p.LogSink("warn", msg)
 	}
+}
+
+// forceTLSScheme rewrites a broker URL to use the TLS transport (ssl://), since
+// paho picks plain vs. TLS from the scheme. A bare host:port becomes ssl://host:port.
+func forceTLSScheme(broker string) string {
+	switch {
+	case strings.HasPrefix(broker, "ssl://"), strings.HasPrefix(broker, "tls://"):
+		return broker
+	case strings.HasPrefix(broker, "tcp://"):
+		return "ssl://" + strings.TrimPrefix(broker, "tcp://")
+	case strings.Contains(broker, "://"):
+		return broker // some other explicit scheme — leave as-is
+	default:
+		return "ssl://" + broker
+	}
+}
+
+// mqttTLSConfig builds a *tls.Config from the MQTT TLS settings. Supports a
+// custom CA (private/self-signed brokers), optional client certificate (mutual
+// TLS), and an explicit insecure escape hatch. With no CA file it uses the
+// system root pool. crypto/tls is pure Go, so this works in the fully-static
+// ICR-3232 (linux/arm/v7) build.
+func mqttTLSConfig(c config.TLSConfig) (*tls.Config, error) {
+	t := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: c.Insecure, //nolint:gosec // operator opt-in for self-signed brokers
+	}
+	if c.CAFile != "" {
+		pem, err := os.ReadFile(c.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read ca file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("ca file %s: no certificates parsed", c.CAFile)
+		}
+		t.RootCAs = pool
+	}
+	if c.CertFile != "" && c.KeyFile != "" {
+		crt, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert/key: %w", err)
+		}
+		t.Certificates = []tls.Certificate{crt}
+	}
+	return t, nil
 }
