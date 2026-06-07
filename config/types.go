@@ -187,6 +187,13 @@ type SignalMapping struct {
 	MetricName string `json:"metricName"` // unique metric name
 	DeviceID   string `json:"deviceId"`   // Sparkplug device ID; empty = node metric
 
+	// UNS/FIWARE decomposition published as uns/code + uns/instance metric
+	// properties (sparkplug-contract.md). Universal — any protocol. SignalCode is
+	// the canonical Attribute (defaults to MetricName); Instance is the entity
+	// sub-channel (defaults to "default"), e.g. a feeder or phase within a meter.
+	SignalCode string `json:"signalCode"`
+	Instance   string `json:"instance"`
+
 	// Protocol selects how the source point is addressed: "dnp3" (default when
 	// empty) or "modbus".
 	Protocol string `json:"protocol"`

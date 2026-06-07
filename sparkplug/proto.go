@@ -58,6 +58,29 @@ type PropertySet struct {
 	Values []*PropertyValue
 }
 
+// AddString appends a String-typed property. Used for engUnit and the universal
+// UNS decomposition (uns/code, uns/instance) — see sparkplug-contract.md.
+func (ps *PropertySet) AddString(key, value string) {
+	v := value
+	ps.Keys = append(ps.Keys, key)
+	ps.Values = append(ps.Values, &PropertyValue{Type: DataTypeString, StringValue: &v})
+}
+
+// UNSProperties builds a PropertySet declaring the universal UNS/FIWARE
+// decomposition of a metric: uns/code (the canonical Attribute → catalog
+// codigo_senal) and uns/instance (the entity sub-channel → nombre_instancia).
+// Any producer attaches these so consumers map Sparkplug metrics to an
+// Entity-Attribute model deterministically, without parsing the metric name.
+func UNSProperties(code, instance string) *PropertySet {
+	if instance == "" {
+		instance = "default"
+	}
+	ps := &PropertySet{}
+	ps.AddString("uns/code", code)
+	ps.AddString("uns/instance", instance)
+	return ps
+}
+
 // DataSet mirrors the Sparkplug B proto2 DataSet message.
 type DataSet struct {
 	NumOfColumns uint64

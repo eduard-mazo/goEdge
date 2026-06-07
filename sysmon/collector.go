@@ -89,13 +89,19 @@ func (c *Collector) Collect(ts uint64) []*sparkplug.Metric {
 		if c.disabled[name] || c.disabled[canonicalSuffix(name)] {
 			return
 		}
-		ms = append(ms, sparkplug.MetricDouble(c.prefix+name, ts, v))
+		mt := sparkplug.MetricDouble(c.prefix+name, ts, v)
+		code, instance := hostUNS(name)
+		mt.Properties = sparkplug.UNSProperties(code, instance)
+		ms = append(ms, mt)
 	}
 	addStr := func(name, v string) {
 		if v == "" || c.disabled[name] {
 			return
 		}
-		ms = append(ms, sparkplug.MetricString(c.prefix+name, ts, v))
+		mt := sparkplug.MetricString(c.prefix+name, ts, v)
+		code, instance := hostUNS(name)
+		mt.Properties = sparkplug.UNSProperties(code, instance)
+		ms = append(ms, mt)
 	}
 
 	c.collectCPU(add)
@@ -313,4 +319,28 @@ func bytesToMB(b uint64) float64 {
 
 func round2(v float64) float64 {
 	return float64(int64(v*100+0.5)) / 100
+}
+
+// hostUNS splits a host metric path into its UNS code (Attribute) and entity
+// instance, mirroring the FIWARE channelization in sparkplug-contract.md:
+//
+//	Uptime_h               → ("Uptime_h",      "default")
+//	CPU/Usage_pct          → ("CPU/Usage_pct", "default")
+//	Disk/root/Used_pct     → ("Disk/Used_pct", "root")
+//	Network/eth0/Rx_MB     → ("Network/Rx_MB", "eth0")
+func hostUNS(name string) (code, instance string) {
+	parts := make([]string, 0, 4)
+	for _, p := range strings.Split(name, "/") {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	switch len(parts) {
+	case 0:
+		return name, "default"
+	case 1, 2:
+		return strings.Join(parts, "/"), "default"
+	default:
+		return parts[0] + "/" + strings.Join(parts[2:], "/"), parts[1]
+	}
 }

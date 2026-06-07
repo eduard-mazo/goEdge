@@ -52,7 +52,7 @@ func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 			metric = sparkplug.MetricDouble(sig.MetricName, tsMs, eng)
 			value = eng
 		}
-		metric.Properties = qualityProperties(m.Quality, sig.EngineeringUnit)
+		metric.Properties = metricProperties(sig, m.Quality)
 		return Result{Value: value, Metric: metric, IsNull: !m.Quality.Good()}, nil
 	}
 
@@ -91,7 +91,7 @@ func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 		return Result{}, fmt.Errorf("mapping %q: unsupported point type %q", sig.MetricName, m.PointType)
 	}
 
-	metric.Properties = qualityProperties(m.Quality, sig.EngineeringUnit)
+	metric.Properties = metricProperties(sig, m.Quality)
 	return Result{Value: value, Metric: metric, IsNull: !m.Quality.Good()}, nil
 }
 
@@ -102,34 +102,71 @@ func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 // mis-reads the value. The type selection here mirrors Apply exactly.
 func BirthMetric(sig config.SignalMapping, ts uint64) *sparkplug.Metric {
 	name := sig.MetricName
+	var m *sparkplug.Metric
 	if sig.IsModbus() {
 		switch sig.Function {
 		case "coil", "discrete_input":
-			return sparkplug.MetricBool(name, ts, false)
+			m = sparkplug.MetricBool(name, ts, false)
 		default: // input/holding register → engineering double
-			return sparkplug.MetricDouble(name, ts, 0)
+			m = sparkplug.MetricDouble(name, ts, 0)
+		}
+	} else {
+		switch source.PointType(sig.PointType) {
+		case source.PointBinary, source.PointBinaryOutputStatus:
+			m = sparkplug.MetricBool(name, ts, false)
+		case source.PointDoubleBitBinary:
+			m = sparkplug.MetricUInt32(name, ts, 0)
+		case source.PointCounter, source.PointFrozenCounter:
+			// Apply keeps the raw uint32 only when there is no scale/offset.
+			scale := sig.Scale
+			if scale == 0 {
+				scale = 1.0
+			}
+			if scale == 1.0 && sig.Offset == 0 {
+				m = sparkplug.MetricUInt32(name, ts, 0)
+			} else {
+				m = sparkplug.MetricDouble(name, ts, 0)
+			}
+		case source.PointOctetString:
+			m = sparkplug.MetricString(name, ts, "")
+		default: // analog, analog_output_status, and any unknown → double
+			m = sparkplug.MetricDouble(name, ts, 0)
 		}
 	}
-	switch source.PointType(sig.PointType) {
-	case source.PointBinary, source.PointBinaryOutputStatus:
-		return sparkplug.MetricBool(name, ts, false)
-	case source.PointDoubleBitBinary:
-		return sparkplug.MetricUInt32(name, ts, 0)
-	case source.PointCounter, source.PointFrozenCounter:
-		// Apply keeps the raw uint32 only when there is no scale/offset.
-		scale := sig.Scale
-		if scale == 0 {
-			scale = 1.0
-		}
-		if scale == 1.0 && sig.Offset == 0 {
-			return sparkplug.MetricUInt32(name, ts, 0)
-		}
-		return sparkplug.MetricDouble(name, ts, 0)
-	case source.PointOctetString:
-		return sparkplug.MetricString(name, ts, "")
-	default: // analog, analog_output_status, and any unknown → double
-		return sparkplug.MetricDouble(name, ts, 0)
+	// Declare the universal UNS decomposition (+ engUnit) at birth so the
+	// consumer seeds its alias→{code,instance} map without parsing the name.
+	ps := sparkplug.UNSProperties(unsCode(sig), unsInstance(sig))
+	if sig.EngineeringUnit != "" {
+		ps.AddString("engUnit", sig.EngineeringUnit)
 	}
+	m.Properties = ps
+	return m
+}
+
+// unsCode returns the canonical UNS Attribute for a mapping: the operator-set
+// SignalCode, or the metric name when unset. Universal across protocols.
+func unsCode(sig config.SignalMapping) string {
+	if sig.SignalCode != "" {
+		return sig.SignalCode
+	}
+	return sig.MetricName
+}
+
+// unsInstance returns the UNS entity instance/channel ("default" when unset).
+func unsInstance(sig config.SignalMapping) string {
+	if sig.Instance != "" {
+		return sig.Instance
+	}
+	return "default"
+}
+
+// metricProperties builds the full data-metric PropertySet: quality/engUnit plus
+// the universal UNS decomposition (uns/code, uns/instance).
+func metricProperties(sig config.SignalMapping, q source.Quality) *sparkplug.PropertySet {
+	ps := qualityProperties(q, sig.EngineeringUnit)
+	ps.AddString("uns/code", unsCode(sig))
+	ps.AddString("uns/instance", unsInstance(sig))
+	return ps
 }
 
 // qualityProperties packs DNP3 flags into a Sparkplug PropertySet so the
