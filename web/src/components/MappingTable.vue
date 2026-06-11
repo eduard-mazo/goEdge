@@ -194,6 +194,33 @@
               <input v-model.number="form.deadband" class="forge-input max-w-[180px]" type="number" step="any" placeholder="0" />
             </Field>
 
+            <!-- UNS / catálogo (contract v3) -->
+            <div class="border border-border rounded-sm p-4 space-y-4" style="background:var(--tk-surface)">
+              <div class="text-muted-foreground text-[10px] uppercase tracking-widest font-sans font-semibold">
+                Catálogo UNS (NBIRTH/DBIRTH)
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <Field label="Nombre" hint="uns/name — nombre de la señal en el catálogo">
+                  <input v-model="form.nombre" class="forge-input" placeholder="Valvula abierta" />
+                </Field>
+                <Field label="Descripción" hint="uns/description">
+                  <input v-model="form.descripcion" class="forge-input" placeholder="Valvula gas confirmación apertura" />
+                </Field>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <Field label="Código de señal" hint="uns/code — vacío = hoja de la métrica (máx. 20)">
+                  <input v-model="form.signalCode" class="forge-input" maxlength="20" :placeholder="unsCodeDefault" />
+                </Field>
+                <Field label="Instancia" hint="uns/instance — vacío = carpeta de la métrica (máx. 30)">
+                  <input v-model="form.instance" class="forge-input" maxlength="30" :placeholder="unsInstanceDefault" />
+                </Field>
+              </div>
+              <p class="font-mono text-[11px] text-text-dim">
+                uns/code = <span class="text-citrico">{{ form.signalCode || unsCodeDefault }}</span>
+                · uns/instance = <span class="text-citrico">{{ form.instance || unsInstanceDefault }}</span>
+              </p>
+            </div>
+
             <label v-if="form.protocol === 'dnp3'" class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
               <input type="checkbox" v-model="form.publishOnPoll" />
               Publicar también en lecturas estáticas (no solo eventos)
@@ -267,6 +294,19 @@ const isRegister = computed(
   () => form.value.function === 'holding_register' || form.value.function === 'input_register',
 )
 
+// Mirror of the Go defaults (mapping.unsCode / unsInstance): uns/code is the
+// LEAF of the metric name, uns/instance the folder path ("default" when flat).
+const unsCodeDefault = computed(() => {
+  const name = form.value.metricName
+  const i = name.lastIndexOf('/')
+  return (i >= 0 ? name.slice(i + 1) : name) || '…'
+})
+const unsInstanceDefault = computed(() => {
+  const name = form.value.metricName
+  const i = name.lastIndexOf('/')
+  return i >= 0 ? name.slice(0, i) : 'default'
+})
+
 function isModbusFraming(m: SignalMapping) { return m.protocol === 'modbus' || m.protocol === 'modbusrtu' }
 function srcId(m: SignalMapping) { return m.sourceId || m.outstationId || '—' }
 
@@ -295,7 +335,7 @@ const filtered = computed(() => {
   const f = filter.value.toLowerCase()
   if (!f) return store.mappings
   return store.mappings.filter((m) =>
-    `${m.metricName} ${m.deviceId ?? ''} ${srcId(m)} ${pointLabel(m)}`.toLowerCase().includes(f),
+    `${m.metricName} ${m.deviceId ?? ''} ${srcId(m)} ${pointLabel(m)} ${m.nombre ?? ''} ${m.signalCode ?? ''}`.toLowerCase().includes(f),
   )
 })
 
@@ -305,6 +345,7 @@ const emptyForm = (): SignalMapping => ({
   pointType: 'analog', index: 0, eventClass: 1,
   function: 'holding_register', address: 0, quantity: 0, dataType: 'float32', byteOrder: 'ABCD',
   scale: 1, offset: 0, engineeringUnit: '',
+  signalCode: '', instance: '', nombre: '', descripcion: '',
   deadband: 0, publishOnPoll: false,
   enabled: true,
 })

@@ -79,6 +79,7 @@ export interface TLSConfig {
 export interface SparkplugConfig {
   groupId: string
   nodeId: string
+  plantaAlias?: string       // Planta UI alias published as uns/planta in NBIRTH
   birthOnConfigChange?: boolean
 }
 
@@ -231,6 +232,14 @@ export interface SignalMapping {
   scale?: number
   offset?: number
   engineeringUnit?: string
+
+  // UNS decomposition overrides (contract v3 §5.1). Empty = derived from
+  // metricName: signalCode = leaf, instance = folder path ("default" if flat).
+  signalCode?: string
+  instance?: string
+  // Birth-only catalog metadata → uns/name / uns/description (consumer pre-fill).
+  nombre?: string
+  descripcion?: string
 
   deadband?: number
   publishOnPoll?: boolean

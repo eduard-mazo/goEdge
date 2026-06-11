@@ -725,6 +725,14 @@ func validateMapping(sig config.SignalMapping, cfg config.AppConfig) error {
 	if sig.MetricName == "" {
 		return fmt.Errorf("metricName is required")
 	}
+	// Contract v3 catalog limits: codigo_senal VARCHAR(20), nombre_instancia
+	// VARCHAR(30) on the consumer side.
+	if len([]rune(sig.SignalCode)) > 20 {
+		return fmt.Errorf("signalCode must be at most 20 characters")
+	}
+	if len([]rune(sig.Instance)) > 30 {
+		return fmt.Errorf("instance must be at most 30 characters")
+	}
 
 	if sig.UsesModbusFraming() {
 		if !validModbusFunctions[sig.Function] {

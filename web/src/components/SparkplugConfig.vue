@@ -13,6 +13,10 @@
           <input v-model="form.nodeId" class="forge-input" placeholder="dnp3-gw-01" required />
         </Field>
 
+        <Field label="Alias de planta" hint="uns/planta en NBIRTH — alias UI de la Planta en el consumidor (opcional)">
+          <input v-model="form.plantaAlias" class="forge-input" placeholder="GSANRAFA" />
+        </Field>
+
         <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
           <input type="checkbox" v-model="form.birthOnConfigChange" />
           Re-publicar NBIRTH al cambiar la configuración
@@ -74,7 +78,7 @@ const saving = ref(false)
 const saved  = ref(false)
 const error  = ref('')
 
-const form = ref<SparkplugConfig>({ groupId: 'plant-floor', nodeId: 'dnp3-gw' })
+const form = ref<SparkplugConfig>({ groupId: 'plant-floor', nodeId: 'dnp3-gw', plantaAlias: '' })
 
 onMounted(async () => { try { form.value = await api.getSparkplug() } catch {} })
 
