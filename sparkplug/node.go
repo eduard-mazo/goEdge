@@ -16,10 +16,17 @@ type Node struct {
 	NodeID  string
 
 	mu             sync.Mutex
-	bdSeq          uint64
+	bdSeq          uint64 // next session's bdSeq (advanced by NewClientOptions)
+	sessionBdSeq   uint64 // bdSeq registered in the current session's NDEATH will
 	lastBirthBdSeq uint64
 	seq            uint64
 	nodeProps      *PropertySet
+
+	// pubMu serializes seq assignment WITH the publish enqueue. Sparkplug B has
+	// ONE seq counter per EoN node across NDATA/DBIRTH/DDATA/DDEATH; if one
+	// goroutine takes seq N, another takes N+1 and reaches the socket first,
+	// every consumer sees an out-of-order seq and requests a rebirth (storm).
+	pubMu sync.Mutex
 
 	// global alias counter (thread-safe); shared across node + device metrics
 	// so alias values are globally unique within the session.
@@ -52,9 +59,17 @@ func (n *Node) SetNodeProperties(ps *PropertySet) {
 }
 
 // NewClientOptions builds paho ClientOptions with NDEATH LWT.
+//
+// The bdSeq written into the will here DEFINES the session's bdSeq: every
+// NBIRTH published within this client's lifetime repeats it (Sparkplug B
+// §6.4.5 — hosts correlate an NDEATH with the birth via matching bdSeq).
+// bdSeq advances per client session, never per NBIRTH; an in-session rebirth
+// must NOT change it or the registered will becomes uncorrelatable.
 func (n *Node) NewClientOptions(broker, clientID, username, password string) *mqtt.ClientOptions {
 	n.mu.Lock()
 	currentBdSeq := n.bdSeq
+	n.sessionBdSeq = currentBdSeq
+	n.bdSeq = (n.bdSeq + 1) % 256
 	n.mu.Unlock()
 
 	deathPayload := n.buildNDEATHPayloadWith(currentBdSeq)
@@ -75,9 +90,13 @@ func (n *Node) NewClientOptions(broker, clientID, username, password string) *mq
 }
 
 // PublishNBirth publishes NBIRTH and resets sequence + alias registries.
+// The bdSeq metric repeats the session bdSeq registered in the NDEATH will.
 func (n *Node) PublishNBirth(client mqtt.Client, metrics []*Metric) error {
+	n.pubMu.Lock()
+	defer n.pubMu.Unlock()
+
 	n.mu.Lock()
-	currentBdSeq := n.bdSeq
+	currentBdSeq := n.sessionBdSeq
 	n.lastBirthBdSeq = currentBdSeq
 	n.seq = 0
 	n.nodeRegistry.Clear()
@@ -106,18 +125,13 @@ func (n *Node) PublishNBirth(client mqtt.Client, metrics []*Metric) error {
 
 	p := &Payload{Timestamp: ts, Seq: 0, Metrics: all, Properties: nodeProps}
 	topic := NodeTopic(n.GroupID, NBIRTH, n.NodeID)
-	if err := n.publishBinary(client, topic, p.Marshal(), 0); err != nil {
-		return err
-	}
-
-	n.mu.Lock()
-	n.bdSeq = (n.bdSeq + 1) % 256
-	n.mu.Unlock()
-	return nil
+	return n.publishBinary(client, topic, p.Marshal(), 0)
 }
 
 // PublishNData publishes NDATA using node-metric aliases.
 func (n *Node) PublishNData(client mqtt.Client, metrics []*Metric) error {
+	n.pubMu.Lock()
+	defer n.pubMu.Unlock()
 	seq := n.nextSeq()
 	ts := NowMs()
 	for _, m := range metrics {
@@ -133,6 +147,8 @@ func (n *Node) PublishNData(client mqtt.Client, metrics []*Metric) error {
 
 // PublishDBirth publishes DBIRTH for a child device, establishing per-device aliases.
 func (n *Node) PublishDBirth(client mqtt.Client, deviceID string, metrics []*Metric) error {
+	n.pubMu.Lock()
+	defer n.pubMu.Unlock()
 	seq := n.nextSeq()
 	ts := NowMs()
 
@@ -157,6 +173,8 @@ func (n *Node) PublishDBirth(client mqtt.Client, deviceID string, metrics []*Met
 
 // PublishDData publishes DDATA for a child device using per-device aliases.
 func (n *Node) PublishDData(client mqtt.Client, deviceID string, metrics []*Metric) error {
+	n.pubMu.Lock()
+	defer n.pubMu.Unlock()
 	seq := n.nextSeq()
 	ts := NowMs()
 
@@ -186,6 +204,8 @@ func (n *Node) PublishDData(client mqtt.Client, deviceID string, metrics []*Metr
 
 // PublishDDeath publishes DDEATH for a child device.
 func (n *Node) PublishDDeath(client mqtt.Client, deviceID string) error {
+	n.pubMu.Lock()
+	defer n.pubMu.Unlock()
 	seq := n.nextSeq()
 	ts := NowMs()
 	p := &Payload{Timestamp: ts, Seq: seq}
@@ -232,17 +252,23 @@ func (n *Node) SubscribeNCMD(client mqtt.Client, onRebirth func()) {
 	token.Wait()
 }
 
-// Bdseq returns current bdSeq value (for status reporting).
+// Bdseq returns the current session's bdSeq (for status reporting). Constant
+// for the lifetime of the MQTT client; it no longer counts rebirths.
 func (n *Node) Bdseq() uint64 {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.bdSeq
+	return n.sessionBdSeq
 }
 
+// nextSeq advances the node sequence number per Sparkplug B: NBIRTH carries 0,
+// each subsequent message increments by one, wrapping 255 → 0. (The previous
+// `(seq % 255) + 1` wrapped 255 → 1, skipping 0 — a spec-compliant consumer
+// detects that as a gap once per 255 messages and requests a rebirth, causing
+// a periodic birth storm.) Callers must hold pubMu.
 func (n *Node) nextSeq() uint64 {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.seq = (n.seq % 255) + 1
+	n.seq = (n.seq + 1) % 256
 	return n.seq
 }
 
