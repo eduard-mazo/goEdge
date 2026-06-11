@@ -36,6 +36,7 @@ import (
 	"goMqttDnp3/dnp3"
 	"goMqttDnp3/mapping"
 	"goMqttDnp3/modbus"
+	"goMqttDnp3/modbusrtu"
 	"goMqttDnp3/source"
 	"goMqttDnp3/sparkplug"
 	"goMqttDnp3/sysmon"
@@ -43,15 +44,15 @@ import (
 
 // Status snapshots the publisher's runtime state for the API.
 type Status struct {
-	Running       bool                             `json:"running"`
-	MQTTConnected bool                             `json:"mqttConnected"`
-	BdSeq         uint64                           `json:"bdSeq"`
-	Outstations   map[string]source.Status         `json:"outstations"`
-	PublishCount  int64                            `json:"publishCount"`
-	ErrorCount    int64                            `json:"errorCount"`
-	DroppedCount  int64                            `json:"droppedCount"` // samples shed when the ingest queue was full
-	Uptime        string                           `json:"uptime"`
-	LastReadings  map[string]float64               `json:"lastReadings"`
+	Running       bool                     `json:"running"`
+	MQTTConnected bool                     `json:"mqttConnected"`
+	BdSeq         uint64                   `json:"bdSeq"`
+	Outstations   map[string]source.Status `json:"outstations"`
+	PublishCount  int64                    `json:"publishCount"`
+	ErrorCount    int64                    `json:"errorCount"`
+	DroppedCount  int64                    `json:"droppedCount"` // samples shed when the ingest queue was full
+	Uptime        string                   `json:"uptime"`
+	LastReadings  map[string]float64       `json:"lastReadings"`
 }
 
 // Publisher manages the full lifecycle: MQTT connect → NBIRTH/DBIRTH → react to
@@ -62,9 +63,10 @@ type Publisher struct {
 	// Field-protocol sources, all feeding OnSample. master is kept typed for
 	// DNP3-specific ops (AddOutstation/IntegrityPoll); sources is the uniform
 	// list used for Start/Stop/Status.
-	master  dnp3.Master
-	modbus  *modbus.Poller
-	sources []source.Source
+	master    dnp3.Master
+	modbus    *modbus.Poller
+	modbusRTU *modbusrtu.Poller
+	sources   []source.Source
 
 	node   *sparkplug.Node
 	client mqtt.Client
@@ -86,6 +88,13 @@ type Publisher struct {
 	wg      sync.WaitGroup
 	running atomic.Bool
 	startAt time.Time
+
+	// mqttUp is our own view of the live MQTT session, flipped by the connect /
+	// connection-lost handlers. We can't use paho's client.IsConnected() for the
+	// offline-buffer/status decision: with ConnectRetry/AutoReconnect it returns
+	// true while merely *retrying* a down broker, which would defeat
+	// store-and-forward. This is true only between OnConnect and OnConnectionLost.
+	mqttUp atomic.Bool
 
 	publishCount atomic.Int64
 	errorCount   atomic.Int64
@@ -124,10 +133,6 @@ type bufferedMsg struct {
 // only sheds under sustained overload (which then shows up as Status.DroppedCount).
 const ingestQueueSize = 4096
 
-// connectTimeout bounds the initial MQTT connect so Start() can't block
-// indefinitely when the broker is unreachable (see Start).
-const connectTimeout = 10 * time.Second
-
 // New creates a Publisher from the current AppConfig.
 func New(cfg config.AppConfig) *Publisher {
 	p := &Publisher{
@@ -147,7 +152,8 @@ func New(cfg config.AppConfig) *Publisher {
 	}
 	p.master = dnp3.New(p)
 	p.modbus = modbus.New(p)
-	p.sources = []source.Source{p.master, p.modbus}
+	p.modbusRTU = modbusrtu.New(p)
+	p.sources = []source.Source{p.master, p.modbus, p.modbusRTU}
 	if cfg.System.Enabled {
 		p.sysCollector = sysmon.New(cfg.System)
 	}
@@ -160,11 +166,11 @@ func New(cfg config.AppConfig) *Publisher {
 }
 
 // normalizeMapping fills the routing fields (PointType/Index) for Modbus mappings
-// from their function/address so the publisher routes and maps them uniformly
-// with DNP3. Modbus reads are polls, so they always publish-on-poll (deadband
-// still applies); there is no event/static distinction.
+// (TCP or RTU) from their function/address so the publisher routes and maps them
+// uniformly with DNP3. Modbus reads are polls, so they always publish-on-poll
+// (deadband still applies); there is no event/static distinction.
 func normalizeMapping(sig config.SignalMapping) config.SignalMapping {
-	if !sig.IsModbus() {
+	if !sig.UsesModbusFraming() {
 		return sig
 	}
 	// Route by (function, address): the function is the point type so that the
@@ -215,46 +221,42 @@ func (p *Publisher) Start(ctx context.Context) error {
 	opts.SetAutoReconnect(true)
 	opts.SetConnectRetry(true)
 	opts.SetMaxReconnectInterval(30 * time.Second)
+	// All MQTT session setup happens here so it runs on the initial connect AND on
+	// every auto-reconnect. Sparkplug requires a fresh NBIRTH after each session is
+	// (re)established; we also (re)subscribe to NCMD and flush anything the field
+	// sources buffered while the broker was unreachable. (paho fires this on its
+	// own goroutine once the connection is up, so the client is connected here and
+	// births publish directly rather than re-buffering.)
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
+		p.mqttUp.Store(true)
 		p.logInfo("MQTT connected to " + mq.Broker + " (clientId=" + clientID + ")")
+		if err := p.node.PublishNBirth(c, p.buildBirthMetrics()); err != nil {
+			p.logWarn("NBIRTH failed: " + err.Error())
+		}
+		p.node.SubscribeNCMD(c, func() {
+			p.logInfo("Rebirth requested, re-publishing NBIRTH")
+			p.node.PublishNBirth(c, p.buildBirthMetrics())
+			p.publishDBirths()
+		})
+		p.publishDBirths()
 		p.drainBuffer()
 	})
 	opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
+		p.mqttUp.Store(false)
 		p.logWarn("MQTT connection lost: " + err.Error() + " (auto-reconnecting)")
 	})
 
 	client := mqtt.NewClient(opts)
-	token := client.Connect()
-	// Bound the initial connect: with ConnectRetry(true) the token never
-	// completes until a broker is reached, so a plain Wait() blocks forever when
-	// the broker is down. WaitTimeout returning false means "not connected yet";
-	// tear the client down (stopping its background retry loop) and fail fast so
-	// the caller — e.g. POST /api/gateway/start — gets a response instead of
-	// hanging. Once started, auto-reconnect still recovers from later drops.
-	if !token.WaitTimeout(connectTimeout) {
-		client.Disconnect(0)
-		p.running.Store(false)
-		return fmt.Errorf("MQTT connect %s: timed out after %s", mq.Broker, connectTimeout)
-	}
-	if err := token.Error(); err != nil {
-		client.Disconnect(0)
-		p.running.Store(false)
-		return fmt.Errorf("MQTT connect %s: %w", mq.Broker, err)
-	}
+	// Set the client before connecting so the field sources start buffering
+	// immediately (publishOrBuffer sees IsConnected()==false → offline buffer)
+	// instead of dropping samples during the initial connect.
 	p.client = client
-
-	birthMetrics := p.buildBirthMetrics()
-	if err := p.node.PublishNBirth(client, birthMetrics); err != nil {
-		p.logWarn("NBIRTH failed: " + err.Error())
-	}
-
-	p.node.SubscribeNCMD(client, func() {
-		p.logInfo("Rebirth requested, re-publishing NBIRTH")
-		p.node.PublishNBirth(client, p.buildBirthMetrics())
-		p.publishDBirths()
-	})
-
-	p.publishDBirths()
+	// Connect in the background with retry — never block or fail startup on an
+	// unreachable broker. An edge gateway must start polling the field at once and
+	// hold data in the store-and-forward buffer even when the broker is down
+	// (cloud broker, link not up, broker not yet provisioned). Births + buffer
+	// drain happen in the OnConnect handler once the broker is reachable.
+	client.Connect()
 
 	for _, o := range cfg.Outstations {
 		if !o.Enabled {
@@ -270,6 +272,14 @@ func (p *Publisher) Start(ctx context.Context) error {
 		}
 		if err := p.modbus.AddDevice(d, cfg.Mappings); err != nil {
 			p.logWarn(fmt.Sprintf("AddDevice %s: %v", d.ID, err))
+		}
+	}
+	for _, d := range cfg.SerialDevices {
+		if !d.Enabled {
+			continue
+		}
+		if err := p.modbusRTU.AddDevice(d, cfg.Mappings); err != nil {
+			p.logWarn(fmt.Sprintf("AddDevice (rtu) %s: %v", d.ID, err))
 		}
 	}
 
@@ -309,8 +319,8 @@ func (p *Publisher) Start(ctx context.Context) error {
 		p.logInfo(fmt.Sprintf("System monitoring enabled (every %s)", p.currentInterval()))
 	}
 
-	p.logInfo(fmt.Sprintf("Publisher started: %d outstations, %d modbus devices, %d mappings",
-		len(cfg.Outstations), len(cfg.ModbusDevices), len(cfg.Mappings)))
+	p.logInfo(fmt.Sprintf("Publisher started: %d outstations, %d modbus/tcp devices, %d modbus/rtu devices, %d mappings",
+		len(cfg.Outstations), len(cfg.ModbusDevices), len(cfg.SerialDevices), len(cfg.Mappings)))
 	return nil
 }
 
@@ -392,7 +402,8 @@ func (p *Publisher) ApplySystemConfig(cfg config.SystemConfig) {
 	p.sysMu.Unlock()
 
 	// Rebirth so subscribers learn the new metric set (and aliases) immediately.
-	if p.client != nil && p.client.IsConnected() {
+	// If the broker is down, skip — OnConnect rebuilds births from current config.
+	if p.client != nil && p.mqttUp.Load() {
 		if err := p.node.PublishNBirth(p.client, p.buildBirthMetrics()); err != nil {
 			p.logWarn("rebirth after system-config change failed: " + err.Error())
 		}
@@ -442,12 +453,13 @@ func (p *Publisher) Stop() {
 	}
 	close(p.ingest)
 	p.wg.Wait()
-	if p.client != nil && p.client.IsConnected() {
+	if p.client != nil && p.mqttUp.Load() {
 		if err := p.node.PublishNDeath(p.client); err != nil {
 			p.logWarn("NDEATH failed: " + err.Error())
 		}
 		p.client.Disconnect(500)
 	}
+	p.mqttUp.Store(false)
 	p.running.Store(false)
 	p.logInfo("Publisher stopped")
 }
@@ -462,9 +474,7 @@ func (p *Publisher) Status() Status {
 		Outstations:  make(map[string]source.Status),
 		LastReadings: make(map[string]float64),
 	}
-	if p.client != nil {
-		s.MQTTConnected = p.client.IsConnected()
-	}
+	s.MQTTConnected = p.mqttUp.Load()
 	if p.node != nil {
 		s.BdSeq = p.node.Bdseq()
 	}
@@ -602,7 +612,7 @@ func (p *Publisher) passDeadband(sig config.SignalMapping, cur float64) bool {
 }
 
 func (p *Publisher) publishOrBuffer(deviceID string, metrics []*sparkplug.Metric) error {
-	if p.client == nil || !p.client.IsConnected() {
+	if p.client == nil || !p.mqttUp.Load() {
 		p.enqueue(deviceID, metrics)
 		return nil
 	}

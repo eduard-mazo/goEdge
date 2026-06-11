@@ -2,9 +2,9 @@
   <div class="space-y-3 h-full flex flex-col">
 
     <div class="flex items-center gap-3 shrink-0">
-      <p class="font-sans text-sm text-text-secondary flex-1">Live gateway event stream</p>
-      <span class="font-mono text-[10px] text-text-dim">{{ store.logs.length }} entries</span>
-      <button class="btn-ghost text-xs py-1 px-3" @click="store.logs.length = 0">Clear</button>
+      <p class="font-sans text-sm text-text-secondary flex-1">Eventos del gateway en vivo</p>
+      <span class="font-mono text-[10px] text-text-dim">{{ store.logs.length }} entradas</span>
+      <button class="btn-ghost text-xs py-1 px-3" @click="store.logs.length = 0">Limpiar</button>
     </div>
 
     <!-- Log terminal -->
@@ -17,7 +17,7 @@
         <!-- Cursor blink when empty -->
         <div v-if="!store.logs.length" class="flex items-center gap-2" style="color:#5A7860">
           <span style="color:#7DC850">›</span>
-          <span>Waiting for events…</span>
+          <span>Esperando eventos…</span>
           <span class="inline-block w-[6px] h-[13px] animate-pulse" style="background:#5A7860;opacity:0.7" />
         </div>
 

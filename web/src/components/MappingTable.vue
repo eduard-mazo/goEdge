@@ -4,26 +4,26 @@
     <!-- Toolbar -->
     <div class="flex items-center gap-3 flex-wrap">
       <p class="font-sans text-sm text-text-secondary flex-1">
-        Point → Sparkplug B metric mappings (DNP3 &amp; Modbus)
+        Señales: punto → métrica Sparkplug B (DNP3, Modbus/TCP y RTU)
       </p>
       <a :href="api.exportMappingsURL()" target="_blank" class="btn-ghost text-xs py-1">
-        ↓ Export JSON
+        ↓ Exportar
       </a>
       <label class="btn-ghost text-xs py-1 cursor-pointer">
-        ↑ Import JSON
+        ↑ Importar
         <input type="file" accept=".json" class="hidden" @change="importFile" />
       </label>
-      <button class="btn-primary text-xs py-1.5" @click="openAdd">+ Add Mapping</button>
+      <button class="btn-primary text-xs py-1.5" @click="openAdd">+ Agregar</button>
     </div>
 
     <!-- Filter -->
     <input v-model="filter" class="forge-input max-w-sm"
-           placeholder="Filter by metric, source, point…" />
+           placeholder="Filtrar por métrica, fuente, punto…" />
 
     <!-- Empty -->
     <div v-if="!filtered.length" class="forge-panel text-center py-12">
       <p class="font-mono text-xs text-text-dim">
-        {{ store.mappings.length ? 'No results for filter.' : 'No signal mappings yet.' }}
+        {{ store.mappings.length ? 'Sin resultados para el filtro.' : 'Aún no hay señales.' }}
       </p>
     </div>
 
@@ -32,14 +32,14 @@
       <table class="min-w-[960px]">
         <thead>
           <tr>
-            <th>Metric Name</th>
+            <th>Métrica</th>
             <th>Proto</th>
-            <th>Source</th>
-            <th>Point</th>
-            <th>Scale</th>
-            <th>EU</th>
-            <th>Deadband</th>
-            <th>Status</th>
+            <th>Fuente</th>
+            <th>Punto</th>
+            <th>Escala</th>
+            <th>UI</th>
+            <th>Banda muerta</th>
+            <th>Estado</th>
             <th></th>
           </tr>
         </thead>
@@ -47,8 +47,8 @@
           <tr v-for="m in filtered" :key="m.id">
             <td class="font-mono text-xs font-medium text-foreground">{{ m.metricName }}</td>
             <td>
-              <span class="proto-tag" :class="isModbus(m) ? 'proto-tag--mb' : 'proto-tag--dnp'">
-                {{ isModbus(m) ? 'MB' : 'DNP3' }}
+              <span class="proto-tag" :class="`proto-tag--${protoTag(m).cls}`">
+                {{ protoTag(m).label }}
               </span>
             </td>
             <td class="font-mono text-[11px]">{{ srcId(m) }}</td>
@@ -65,11 +65,11 @@
             </td>
             <td>
               <div class="flex gap-1 justify-end">
-                <button class="btn-ghost text-[10px] py-0.5 px-2" @click="openEdit(m)">Edit</button>
+                <button class="btn-ghost text-[10px] py-0.5 px-2" @click="openEdit(m)">Editar</button>
                 <button
                   class="btn-ghost text-[10px] py-0.5 px-2 !border-red-base/40 !text-red-base hover:!border-red-bright hover:!text-red-bright"
                   @click="del(m.id)"
-                >Del</button>
+                >Borrar</button>
               </div>
             </td>
           </tr>
@@ -79,36 +79,44 @@
 
     <!-- Modal -->
     <Teleport to="body">
-      <div v-if="modal" class="modal-backdrop overflow-y-auto py-6" @click.self="modal = false">
+      <div v-if="modal" class="modal-backdrop overflow-y-auto py-6">
         <div class="forge-panel w-full max-w-2xl mx-auto">
-          <div class="forge-header">{{ editId ? 'Edit Signal Mapping' : 'Add Signal Mapping' }}</div>
+          <div class="forge-header flex items-center justify-between gap-3">
+            <span>{{ editId ? 'Editar señal' : 'Nueva señal' }}</span>
+            <button type="button" class="modal-x" @click="modal = false" aria-label="Cerrar">✕</button>
+          </div>
           <form @submit.prevent="saveMapping" class="p-5 space-y-4">
 
             <!-- Protocol switch -->
             <div class="seg">
-              <button type="button" v-for="p in ['dnp3','modbus']" :key="p"
-                      class="seg-btn" :class="form.protocol === p ? 'seg-btn--active' : ''"
-                      @click="form.protocol = p as 'dnp3' | 'modbus'">
-                {{ p === 'dnp3' ? 'DNP3' : 'Modbus' }}
+              <button type="button" v-for="p in protocols" :key="p.value"
+                      class="seg-btn" :class="form.protocol === p.value ? 'seg-btn--active' : ''"
+                      @click="form.protocol = p.value">
+                {{ p.label }}
               </button>
             </div>
 
             <div class="grid grid-cols-2 gap-4">
-              <Field label="Metric Name" hint="Unique Sparkplug B metric identifier">
+              <Field label="Nombre de métrica" hint="Identificador único Sparkplug B">
                 <input v-model="form.metricName" class="forge-input" placeholder="feeder/voltage_kv" required />
               </Field>
-              <Field label="Sparkplug Device ID" hint="Leave blank to publish as node metric">
-                <input v-model="form.deviceId" class="forge-input" placeholder="(node level)" />
+              <Field label="Device ID Sparkplug" hint="Vacío = métrica de nodo">
+                <input v-model="form.deviceId" class="forge-input" placeholder="(nivel de nodo)" />
               </Field>
             </div>
 
             <!-- Source select (protocol-specific list) -->
-            <Field :label="form.protocol === 'modbus' ? 'Modbus Device' : 'Outstation'">
+            <Field :label="sourceLabel">
               <select v-model="form.sourceId" class="forge-input" required>
-                <option value="" disabled>Select source…</option>
+                <option value="" disabled>Elegir fuente…</option>
                 <template v-if="form.protocol === 'modbus'">
                   <option v-for="d in store.modbusDevices" :key="d.id" :value="d.id">
                     {{ d.label || d.id }} ({{ d.host }}:{{ d.port }})
+                  </option>
+                </template>
+                <template v-else-if="form.protocol === 'modbusrtu'">
+                  <option v-for="d in store.serialDevices" :key="d.id" :value="d.id">
+                    {{ d.label || d.id }} ({{ d.port }} #{{ d.unitId }})
                   </option>
                 </template>
                 <template v-else>
@@ -120,22 +128,22 @@
             </Field>
 
             <!-- DNP3 point identity -->
-            <template v-if="form.protocol !== 'modbus'">
+            <template v-if="form.protocol === 'dnp3'">
               <div class="grid grid-cols-3 gap-4">
-                <Field label="Point Type" hint="DNP3 group/variation" class="col-span-1">
+                <Field label="Tipo de punto" hint="grupo/variación DNP3" class="col-span-1">
                   <select v-model="form.pointType" class="forge-input">
                     <option v-for="pt in pointTypes" :key="pt.value" :value="pt.value">{{ pt.label }}</option>
                   </select>
                 </Field>
-                <Field label="Index" hint="0-based point index">
+                <Field label="Índice" hint="índice base 0">
                   <input v-model.number="form.index" class="forge-input" type="number" min="0" max="65535" />
                 </Field>
-                <Field label="Event Class" hint="Informational">
+                <Field label="Clase de evento" hint="informativo">
                   <select v-model.number="form.eventClass" class="forge-input">
-                    <option :value="0">Static only</option>
-                    <option :value="1">Class 1</option>
-                    <option :value="2">Class 2</option>
-                    <option :value="3">Class 3</option>
+                    <option :value="0">Solo estático</option>
+                    <option :value="1">Clase 1</option>
+                    <option :value="2">Clase 2</option>
+                    <option :value="3">Clase 3</option>
                   </select>
                 </Field>
               </div>
@@ -144,64 +152,64 @@
             <!-- Modbus point identity -->
             <template v-else>
               <div class="grid grid-cols-2 gap-4">
-                <Field label="Function">
+                <Field label="Función">
                   <select v-model="form.function" class="forge-input">
                     <option v-for="f in modbusFunctions" :key="f.value" :value="f.value">{{ f.label }}</option>
                   </select>
                 </Field>
-                <Field label="Address" hint="Register / coil start address">
+                <Field label="Dirección" hint="dirección inicial de registro/coil">
                   <input v-model.number="form.address" class="forge-input" type="number" min="0" max="65535" />
                 </Field>
               </div>
               <div class="grid grid-cols-3 gap-4" v-if="isRegister">
-                <Field label="Data Type">
+                <Field label="Tipo de dato">
                   <select v-model="form.dataType" class="forge-input">
                     <option v-for="dt in modbusDataTypes" :key="dt" :value="dt">{{ dt }}</option>
                   </select>
                 </Field>
-                <Field label="Byte Order" hint="word/byte order for 32/64-bit">
+                <Field label="Orden de bytes" hint="orden para 32/64-bit">
                   <select v-model="form.byteOrder" class="forge-input">
                     <option v-for="bo in byteOrders" :key="bo" :value="bo">{{ bo }}</option>
                   </select>
                 </Field>
-                <Field label="Quantity" hint="0 = derive from data type">
+                <Field label="Cantidad" hint="0 = según tipo de dato">
                   <input v-model.number="form.quantity" class="forge-input" type="number" min="0" max="125" placeholder="0" />
                 </Field>
               </div>
             </template>
 
             <div class="grid grid-cols-3 gap-4">
-              <Field label="Scale" hint="value × scale + offset">
+              <Field label="Escala" hint="valor × escala + offset">
                 <input v-model.number="form.scale" class="forge-input" type="number" step="any" placeholder="1" />
               </Field>
               <Field label="Offset">
                 <input v-model.number="form.offset" class="forge-input" type="number" step="any" placeholder="0" />
               </Field>
-              <Field label="Eng. Unit">
+              <Field label="Unidad ing.">
                 <input v-model="form.engineeringUnit" class="forge-input" placeholder="kV" />
               </Field>
             </div>
 
-            <Field label="Deadband" hint="Min change (engineering units) to publish; 0 = always">
+            <Field label="Banda muerta" hint="cambio mínimo (en unidades) para publicar; 0 = siempre">
               <input v-model.number="form.deadband" class="forge-input max-w-[180px]" type="number" step="any" placeholder="0" />
             </Field>
 
-            <label v-if="form.protocol !== 'modbus'" class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
+            <label v-if="form.protocol === 'dnp3'" class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
               <input type="checkbox" v-model="form.publishOnPoll" />
-              Publish on static reads too (not only on event)
+              Publicar también en lecturas estáticas (no solo eventos)
             </label>
             <p v-else class="font-mono text-[11px] text-text-dim">
-              Modbus reads are polled — every change is published (subject to deadband).
+              Las lecturas {{ form.protocol === 'modbusrtu' ? 'Modbus RTU' : 'Modbus' }} son sondeadas — cada cambio se publica (según banda muerta).
             </p>
             <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
-              <input type="checkbox" v-model="form.enabled" /> Enabled
+              <input type="checkbox" v-model="form.enabled" /> Habilitada
             </label>
 
             <p v-if="error" class="font-mono text-xs text-red-bright">⚠ {{ error }}</p>
 
-            <div class="flex justify-end gap-3 pt-3 border-t border-border">
-              <button type="button" class="btn-ghost text-xs" @click="modal = false">Cancel</button>
-              <button type="submit" class="btn-primary text-xs">Save Mapping</button>
+            <div class="flex justify-end gap-3 pt-2 border-t border-border">
+              <button type="button" class="btn-ghost text-xs" @click="modal = false">Cancelar</button>
+              <button type="submit" class="btn-primary text-xs">Guardar</button>
             </div>
           </form>
         </div>
@@ -214,7 +222,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
-import { api, type SignalMapping, type PointType, type ModbusFunction, type ModbusDataType } from '@/api/client'
+import { api, type SignalMapping, type Protocol, type PointType, type ModbusFunction, type ModbusDataType } from '@/api/client'
 import Field from './Field.vue'
 
 const store  = useGatewayStore()
@@ -223,15 +231,27 @@ const editId = ref('')
 const error  = ref('')
 const filter = ref('')
 
+const protocols: { value: Protocol; label: string }[] = [
+  { value: 'dnp3',      label: 'DNP3' },
+  { value: 'modbus',    label: 'Modbus/TCP' },
+  { value: 'modbusrtu', label: 'Modbus RTU' },
+]
+
+const sourceLabel = computed(() => ({
+  modbus:    'Dispositivo Modbus',
+  modbusrtu: 'Dispositivo serial (RS-485)',
+  dnp3:      'Estación',
+}[form.value.protocol ?? 'dnp3']))
+
 const pointTypes: { value: PointType; label: string }[] = [
-  { value: 'binary',               label: 'Binary Input (g1/g2)' },
-  { value: 'double_bit_binary',    label: 'Double-Bit Binary (g3/g4)' },
-  { value: 'binary_output_status', label: 'Binary Output Status (g10/g11)' },
-  { value: 'counter',              label: 'Counter (g20/g22)' },
-  { value: 'frozen_counter',       label: 'Frozen Counter (g21/g23)' },
-  { value: 'analog',               label: 'Analog Input (g30/g32)' },
-  { value: 'analog_output_status', label: 'Analog Output Status (g40/g42)' },
-  { value: 'octet_string',         label: 'Octet String (g110/g111)' },
+  { value: 'binary',               label: 'Entrada binaria (g1/g2)' },
+  { value: 'double_bit_binary',    label: 'Binaria doble bit (g3/g4)' },
+  { value: 'binary_output_status', label: 'Estado salida binaria (g10/g11)' },
+  { value: 'counter',              label: 'Contador (g20/g22)' },
+  { value: 'frozen_counter',       label: 'Contador congelado (g21/g23)' },
+  { value: 'analog',               label: 'Entrada analógica (g30/g32)' },
+  { value: 'analog_output_status', label: 'Estado salida analógica (g40/g42)' },
+  { value: 'octet_string',         label: 'Cadena de octetos (g110/g111)' },
 ]
 
 const modbusFunctions: { value: ModbusFunction; label: string }[] = [
@@ -247,8 +267,14 @@ const isRegister = computed(
   () => form.value.function === 'holding_register' || form.value.function === 'input_register',
 )
 
-function isModbus(m: SignalMapping) { return m.protocol === 'modbus' }
+function isModbusFraming(m: SignalMapping) { return m.protocol === 'modbus' || m.protocol === 'modbusrtu' }
 function srcId(m: SignalMapping) { return m.sourceId || m.outstationId || '—' }
+
+function protoTag(m: SignalMapping): { cls: string; label: string } {
+  if (m.protocol === 'modbusrtu') return { cls: 'rtu', label: 'RTU' }
+  if (m.protocol === 'modbus')    return { cls: 'mb',  label: 'MB' }
+  return { cls: 'dnp', label: 'DNP3' }
+}
 
 const shortPoint = (pt: string) => ({
   binary: 'g1', double_bit_binary: 'g3', binary_output_status: 'g10',
@@ -257,7 +283,7 @@ const shortPoint = (pt: string) => ({
 }[pt] ?? pt)
 
 function pointLabel(m: SignalMapping): string {
-  if (isModbus(m)) {
+  if (isModbusFraming(m)) {
     const fn = (m.function ?? '').replace(/_/g, ' ')
     const dt = m.dataType ? ` · ${m.dataType}` : ''
     return `${fn} @${m.address ?? 0}${dt}`
@@ -294,9 +320,10 @@ function openEdit(m: SignalMapping) {
 
 async function saveMapping() {
   error.value = ''
-  // Keep legacy outstationId aligned with sourceId for DNP3 mappings.
+  // Keep legacy outstationId aligned with sourceId for DNP3 mappings only;
+  // Modbus/TCP and RTU reference their device via sourceId.
   const payload: SignalMapping = { ...form.value }
-  if (payload.protocol !== 'modbus') payload.outstationId = payload.sourceId ?? ''
+  payload.outstationId = payload.protocol === 'dnp3' ? (payload.sourceId ?? '') : ''
   try {
     if (editId.value) await api.updateMapping(editId.value, payload)
     else await api.addMapping(payload)
@@ -306,7 +333,7 @@ async function saveMapping() {
 }
 
 async function del(id: string) {
-  if (!confirm('Delete this signal mapping?')) return
+  if (!confirm('¿Eliminar esta señal?')) return
   await api.deleteMapping(id)
   await store.loadMappings()
 }
@@ -319,7 +346,7 @@ async function importFile(ev: Event) {
     await api.importMappings(mappings)
     await store.loadMappings()
   } catch (e: unknown) {
-    alert('Import failed: ' + (e instanceof Error ? e.message : String(e)))
+    alert('Error al importar: ' + (e instanceof Error ? e.message : String(e)))
   }
 }
 </script>
@@ -332,4 +359,5 @@ async function importFile(ev: Event) {
 .proto-tag { font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; border: 1px solid; }
 .proto-tag--dnp { color: var(--epm-bosque); border-color: color-mix(in srgb, var(--epm-bosque) 40%, transparent); background: color-mix(in srgb, var(--epm-bosque) 8%, transparent); }
 .proto-tag--mb  { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 45%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 10%, transparent); }
+.proto-tag--rtu { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 55%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 16%, transparent); letter-spacing: 0.1em; }
 </style>

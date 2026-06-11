@@ -7,24 +7,24 @@
     <!-- ── Summary strip ─────────────────────────────────────────── -->
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <div class="stat-item">
-        <div class="stat-item__label">Points</div>
+        <div class="stat-item__label">Puntos</div>
         <div class="stat-item__value">{{ rows.length }}</div>
-        <div class="stat-item__unit">{{ filtered.length }} shown</div>
+        <div class="stat-item__unit">{{ filtered.length }} visibles</div>
       </div>
       <div class="stat-item">
-        <div class="stat-item__label">Live</div>
+        <div class="stat-item__label">En vivo</div>
         <div class="stat-item__value text-bosque">{{ liveCount }}</div>
-        <div class="stat-item__unit">reporting value</div>
+        <div class="stat-item__unit">con valor</div>
       </div>
       <div class="stat-item">
-        <div class="stat-item__label">Sources Up</div>
+        <div class="stat-item__label">Fuentes</div>
         <div class="stat-item__value">{{ sourcesUp }}<span class="text-text-dim">/{{ sources.length }}</span></div>
         <div class="stat-item__unit">{{ dnp3Count }} dnp3 · {{ modbusCount }} modbus</div>
       </div>
       <div class="stat-item">
-        <div class="stat-item__label">Faulted</div>
+        <div class="stat-item__label">En falla</div>
         <div class="stat-item__value" :class="faultCount ? 'text-[color:var(--signal-fault)]' : ''">{{ faultCount }}</div>
-        <div class="stat-item__unit">source offline</div>
+        <div class="stat-item__unit">sin conexión</div>
       </div>
     </div>
 
@@ -36,7 +36,7 @@
         <input
           v-model="q"
           type="text"
-          placeholder="Search metric, source, unit…"
+          placeholder="Buscar métrica, fuente…"
           class="forge-input pl-8 font-mono text-[12px]"
         />
       </div>
@@ -50,7 +50,7 @@
 
       <!-- source filter -->
       <select v-model="sourceFilter" class="forge-input w-auto min-w-[130px] font-mono text-[12px]">
-        <option value="">All sources</option>
+        <option value="">Todas</option>
         <option v-for="s in sources" :key="s.id" :value="s.id">{{ s.label || s.id }}</option>
       </select>
 
@@ -65,7 +65,7 @@
       <div class="ml-auto flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider"
            :class="store.isRunning ? 'text-bosque' : 'text-text-dim'">
         <span class="led" :class="store.isRunning ? 'led--green' : 'led--dim'" />
-        {{ store.isRunning ? 'streaming' : 'idle' }}
+        {{ store.isRunning ? 'en vivo' : 'inactivo' }}
       </div>
     </div>
 
@@ -77,17 +77,17 @@
             <tr>
               <th class="w-7"></th>
               <th class="cursor-pointer select-none" @click="sortBy('metric')">
-                Metric <SortGlyph :col="'metric'" :sort="sort" />
+                Métrica <SortGlyph :col="'metric'" :sort="sort" />
               </th>
               <th class="cursor-pointer select-none" @click="sortBy('source')">
-                Source <SortGlyph :col="'source'" :sort="sort" />
+                Fuente <SortGlyph :col="'source'" :sort="sort" />
               </th>
               <th>Proto</th>
-              <th>Point</th>
+              <th>Punto</th>
               <th class="text-right cursor-pointer select-none" @click="sortBy('value')">
-                Value <SortGlyph :col="'value'" :sort="sort" />
+                Valor <SortGlyph :col="'value'" :sort="sort" />
               </th>
-              <th class="text-right">Updated</th>
+              <th class="text-right">Actualizado</th>
             </tr>
           </thead>
           <tbody>
@@ -138,8 +138,8 @@
             <tr v-if="filtered.length === 0">
               <td colspan="7" class="text-center py-12">
                 <div class="text-text-dim font-mono text-[12px]">
-                  <template v-if="rows.length === 0">No mapped points. Add mappings to see live values.</template>
-                  <template v-else>No points match the current filters.</template>
+                  <template v-if="rows.length === 0">Sin señales. Agrégalas para ver datos en vivo.</template>
+                  <template v-else>Sin resultados para el filtro.</template>
                 </div>
               </td>
             </tr>
@@ -149,7 +149,7 @@
       <!-- footer rail -->
       <div class="flex items-center justify-between px-3 py-2 border-t border-border bg-muted">
         <span class="font-mono text-[10px] text-text-dim uppercase tracking-wider">
-          {{ filtered.length }} / {{ rows.length }} points
+          {{ filtered.length }} / {{ rows.length }} puntos
         </span>
         <span class="font-mono text-[10px] text-text-dim">
           tick {{ tickAgo }}<template v-if="store.status?.publishCount != null"> · pub {{ store.status.publishCount }}</template>
@@ -160,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted, h } from 'vue'
 import { Search } from 'lucide-vue-next'
 import { useGatewayStore } from '@/stores/gateway'
 import type { SignalMapping } from '@/api/client'
@@ -175,14 +175,14 @@ const statusFilter = ref<'' | 'live' | 'fault'>('')
 const sort = ref<{ col: 'metric' | 'source' | 'value'; dir: 1 | -1 }>({ col: 'metric', dir: 1 })
 
 const protocolOpts = [
-  { v: '' as const, l: 'All' },
+  { v: '' as const, l: 'Todos' },
   { v: 'dnp3' as const, l: 'DNP3' },
   { v: 'modbus' as const, l: 'Modbus' },
 ]
 const statusOpts = [
-  { v: '' as const, l: 'Any' },
-  { v: 'live' as const, l: 'Live' },
-  { v: 'fault' as const, l: 'Fault' },
+  { v: '' as const, l: 'Todo' },
+  { v: 'live' as const, l: 'En vivo' },
+  { v: 'fault' as const, l: 'Falla' },
 ]
 
 function sortBy(col: 'metric' | 'source' | 'value') {
@@ -335,18 +335,19 @@ function ago(iso?: string): string {
   const t = new Date(iso).getTime()
   if (!t || t < 0) return '—'
   const s = Math.floor((now.value - t) / 1000)
-  if (s < 0) return 'now'
-  if (s < 1) return 'now'
+  if (s < 0) return 'ahora'
+  if (s < 1) return 'ahora'
   if (s < 60) return s + 's'
   if (s < 3600) return Math.floor(s / 60) + 'm'
   return Math.floor(s / 3600) + 'h'
 }
 
-// SortGlyph — tiny inline indicator component
-const SortGlyph = {
-  props: { col: String, sort: Object },
-  template: `<span v-if="sort.col === col" class="inline-block text-bosque ml-0.5">{{ sort.dir === 1 ? '▲' : '▼' }}</span>`,
-}
+// SortGlyph — tiny inline indicator. Uses a render function (not a string
+// template) so it works in the runtime-only production build.
+const SortGlyph = (props: { col: string; sort: { col: string; dir: number } }) =>
+  props.sort.col === props.col
+    ? h('span', { class: 'inline-block text-bosque ml-0.5' }, props.sort.dir === 1 ? '▲' : '▼')
+    : null
 </script>
 
 <style scoped>

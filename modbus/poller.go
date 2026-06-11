@@ -18,21 +18,25 @@ import (
 	"goMqttDnp3/source"
 )
 
-// point is a resolved read derived from a Modbus SignalMapping.
-type point struct {
-	ptype     source.PointType // routing point type (binary or analog)
-	index     uint16           // routing index == Modbus address
-	function  string
-	address   uint16
-	quantity  uint16
-	dataType  string
-	byteOrder string
+// Point is a resolved read derived from a Modbus SignalMapping. The Modbus
+// framing (function codes, register/coil decoding, word/byte order) is identical
+// for Modbus/TCP and Modbus RTU, so Point — together with ResolvePoint and
+// DecodeSample — is exported and reused by the serial RTU source (package
+// modbusrtu). Only the transport differs between the two.
+type Point struct {
+	Ptype     source.PointType // routing point type (binary or analog)
+	Index     uint16           // routing index == Modbus address
+	Function  string
+	Address   uint16
+	Quantity  uint16
+	DataType  string
+	ByteOrder string
 }
 
 // device holds one Modbus/TCP connection and the points to poll on it.
 type device struct {
 	cfg    config.ModbusDevice
-	points []point
+	points []Point
 
 	handler *mb.TCPClientHandler
 	client  mb.Client
@@ -81,7 +85,7 @@ func (p *Poller) AddDevice(d config.ModbusDevice, mappings []config.SignalMappin
 		if !m.IsModbus() || m.Src() != d.ID || !m.Enabled {
 			continue
 		}
-		pt, err := resolvePoint(m)
+		pt, err := ResolvePoint(m)
 		if err != nil {
 			return fmt.Errorf("modbus device %q: %w", d.ID, err)
 		}
@@ -195,7 +199,7 @@ func (p *Poller) scan(ctx context.Context, dev *device) {
 			p.setConn(dev, false, "read: "+err.Error())
 			return
 		}
-		s, ok := decodeSample(dev.cfg.ID, pt, raw)
+		s, ok := DecodeSample(dev.cfg.ID, pt, raw)
 		if !ok {
 			continue
 		}
@@ -209,29 +213,14 @@ func (p *Poller) scan(ctx context.Context, dev *device) {
 	}
 }
 
-func (p *Poller) read(ctx context.Context, dev *device, pt point) ([]byte, error) {
+func (p *Poller) read(ctx context.Context, dev *device, pt Point) ([]byte, error) {
 	retries := dev.cfg.Retries
 	if retries < 0 {
 		retries = 0
 	}
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
-		var (
-			data []byte
-			err  error
-		)
-		switch pt.function {
-		case "coil":
-			data, err = dev.client.ReadCoils(ctx, pt.address, pt.quantity)
-		case "discrete_input":
-			data, err = dev.client.ReadDiscreteInputs(ctx, pt.address, pt.quantity)
-		case "input_register":
-			data, err = dev.client.ReadInputRegisters(ctx, pt.address, pt.quantity)
-		case "holding_register":
-			data, err = dev.client.ReadHoldingRegisters(ctx, pt.address, pt.quantity)
-		default:
-			return nil, fmt.Errorf("unsupported function %q", pt.function)
-		}
+		data, err := Read(ctx, dev.client, pt)
 		if err == nil {
 			return data, nil
 		}
@@ -259,37 +248,55 @@ func (p *Poller) setConn(dev *device, connected bool, errMsg string) {
 	}
 }
 
-// resolvePoint derives the routing point type/index and read parameters from a
-// Modbus mapping.
-func resolvePoint(m config.SignalMapping) (point, error) {
-	pt := point{
+// ResolvePoint derives the routing point type/index and read parameters from a
+// Modbus mapping. Shared by the Modbus/TCP poller and the serial RTU source.
+func ResolvePoint(m config.SignalMapping) (Point, error) {
+	pt := Point{
 		// Routing point type is the function itself so that e.g. holding@0 and
 		// input@0 (or coil@0 and discrete@0) don't collide on (pointType,index).
-		ptype:     source.PointType(m.Function),
-		index:     m.Address,
-		function:  m.Function,
-		address:   m.Address,
-		quantity:  m.Quantity,
-		dataType:  m.DataType,
-		byteOrder: m.ByteOrder,
+		Ptype:     source.PointType(m.Function),
+		Index:     m.Address,
+		Function:  m.Function,
+		Address:   m.Address,
+		Quantity:  m.Quantity,
+		DataType:  m.DataType,
+		ByteOrder: m.ByteOrder,
 	}
 	switch m.Function {
 	case "coil", "discrete_input":
-		if pt.quantity == 0 {
-			pt.quantity = 1
+		if pt.Quantity == 0 {
+			pt.Quantity = 1
 		}
 	case "input_register", "holding_register":
-		if pt.quantity == 0 {
+		if pt.Quantity == 0 {
 			q, err := registersFor(m.DataType)
 			if err != nil {
-				return point{}, err
+				return Point{}, err
 			}
-			pt.quantity = q
+			pt.Quantity = q
 		}
 	default:
-		return point{}, fmt.Errorf("unsupported function %q (mapping %q)", m.Function, m.MetricName)
+		return Point{}, fmt.Errorf("unsupported function %q (mapping %q)", m.Function, m.MetricName)
 	}
 	return pt, nil
+}
+
+// Read issues the single Modbus read for pt against client and returns the raw
+// response bytes. Transport-agnostic: works with any grid-x mb.Client (TCP or
+// RTU). Shared by the Modbus/TCP poller and the serial RTU source.
+func Read(ctx context.Context, client mb.Client, pt Point) ([]byte, error) {
+	switch pt.Function {
+	case "coil":
+		return client.ReadCoils(ctx, pt.Address, pt.Quantity)
+	case "discrete_input":
+		return client.ReadDiscreteInputs(ctx, pt.Address, pt.Quantity)
+	case "input_register":
+		return client.ReadInputRegisters(ctx, pt.Address, pt.Quantity)
+	case "holding_register":
+		return client.ReadHoldingRegisters(ctx, pt.Address, pt.Quantity)
+	default:
+		return nil, fmt.Errorf("unsupported function %q", pt.Function)
+	}
 }
 
 // registersFor returns the number of 16-bit registers a data type spans.
@@ -306,24 +313,25 @@ func registersFor(dataType string) (uint16, error) {
 	}
 }
 
-// decodeSample turns raw Modbus bytes into a source.Sample for the point.
-func decodeSample(deviceID string, pt point, raw []byte) (source.Sample, bool) {
+// DecodeSample turns raw Modbus bytes into a source.Sample for the point.
+// Shared by the Modbus/TCP poller and the serial RTU source.
+func DecodeSample(deviceID string, pt Point, raw []byte) (source.Sample, bool) {
 	s := source.Sample{
 		SourceID:  deviceID,
-		PointType: pt.ptype,
-		Index:     pt.index,
+		PointType: pt.Ptype,
+		Index:     pt.Index,
 		Time:      time.Now(),
 		Quality:   source.QualityOnline, // a successful read is, by definition, online
 		IsEvent:   false,                // Modbus reads are polls, never events
 	}
-	switch pt.function {
+	switch pt.Function {
 	case "coil", "discrete_input":
 		if len(raw) < 1 {
 			return source.Sample{}, false
 		}
 		s.BoolValue = raw[0]&0x01 != 0
 	default: // registers
-		v, ok := decodeNumeric(raw, pt.dataType, pt.byteOrder)
+		v, ok := decodeNumeric(raw, pt.DataType, pt.ByteOrder)
 		if !ok {
 			return source.Sample{}, false
 		}

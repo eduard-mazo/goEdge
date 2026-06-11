@@ -13,6 +13,7 @@ type AppConfig struct {
 	Sparkplug     SparkplugConfig  `json:"sparkplug"`
 	Outstations   []DNP3Outstation `json:"outstations"`
 	ModbusDevices []ModbusDevice   `json:"modbusDevices"`
+	SerialDevices []SerialDevice   `json:"serialDevices"`
 	Mappings      []SignalMapping  `json:"mappings"`
 	System        SystemConfig     `json:"system"`
 }
@@ -76,8 +77,8 @@ func (m SystemMetrics) Effective() SystemMetrics {
 // ModbusDevice represents a Modbus/TCP slave reachable over the network.
 // One TCP connection per device; reads are serialized and polled on a ticker.
 type ModbusDevice struct {
-	ID           string `json:"id"`           // unique slug (user-defined)
-	Label        string `json:"label"`        // human-readable name
+	ID           string `json:"id"`    // unique slug (user-defined)
+	Label        string `json:"label"` // human-readable name
 	Host         string `json:"host"`
 	Port         int    `json:"port"`         // default 502
 	UnitID       uint8  `json:"unitId"`       // Modbus slave/unit id (typical 1)
@@ -97,9 +98,81 @@ func (d ModbusDevice) Addr() string {
 	return d.Host + ":" + strconv.Itoa(port)
 }
 
+// SerialDevice represents a Modbus RTU slave reachable over an RS-485 (or RS-232)
+// serial port — the field bus on edge gateways such as the Advantech ICR-3232,
+// whose RS-485 port enumerates as /dev/ttyS1. Modbus RTU shares its PDU and
+// register decoding with Modbus/TCP (see package modbus); only the transport and
+// the half-duplex multidrop bus differ.
+//
+// RS-485 is multidrop: several SerialDevices can share one Port with distinct
+// UnitIDs. The RTU source groups devices by Port and serializes every
+// transaction on that port (the bus is half-duplex — two slaves cannot be polled
+// at once). When devices share a Port, the bus-level line settings (BaudRate,
+// DataBits, Parity, StopBits, RS485) are taken from the first device added for
+// that Port; per-device cadence/timeout/retry still apply individually.
+type SerialDevice struct {
+	ID       string `json:"id"`       // unique slug; mappings reference it as sourceId
+	Label    string `json:"label"`    // human-readable name
+	Port     string `json:"port"`     // serial device node, e.g. /dev/ttyS1, /dev/ttyUSB6, COM3
+	BaudRate int    `json:"baudRate"` // default 9600
+	DataBits int    `json:"dataBits"` // default 8
+	Parity   string `json:"parity"`   // N|E|O; default N (note: 8N1 needs 2 stop bits per Modbus spec — see StopBits)
+	StopBits int    `json:"stopBits"` // 1 or 2; default 1
+	UnitID   uint8  `json:"unitId"`   // Modbus RTU slave address (1..247)
+
+	ScanRateMs   int `json:"scanRateMs"`   // poll cadence; default 1000
+	TimeoutMs    int `json:"timeoutMs"`    // per-request timeout; default 1000
+	Retries      int `json:"retries"`      // transient-error retries; default 2
+	RetryDelayMs int `json:"retryDelayMs"` // delay between retries; default 200
+
+	// RS485 controls userspace RS-485 direction (DE/RE) via the Linux TIOCSRS485
+	// ioctl. On the ICR-3232 the kernel already drives DE/RE in hardware for ttyS1
+	// (dmesg: "RS485 expansion board detected on ttyS1"), so leave Enabled=false
+	// there; enable it only for USB adapters that need software RTS toggling.
+	RS485 RS485Config `json:"rs485"`
+
+	Enabled bool `json:"enabled"`
+}
+
+// RS485Config maps to the Linux struct serial_rs485 (TIOCSRS485). Ignored unless
+// Enabled. Defaults (all-zero) request RTS-high-during-send, which suits the
+// common case; flip the fields for adapters wired with inverted DE polarity.
+type RS485Config struct {
+	Enabled              bool `json:"enabled"`              // apply RS-485 ioctl on open
+	RtsHighDuringSend    bool `json:"rtsHighDuringSend"`    // assert RTS while transmitting (DE active-high)
+	RtsHighAfterSend     bool `json:"rtsHighAfterSend"`     // RTS level when idle/receiving
+	RxDuringTx           bool `json:"rxDuringTx"`           // keep receiver on during transmit (echo)
+	DelayRtsBeforeSendUs int  `json:"delayRtsBeforeSendUs"` // µs after asserting DE before first bit
+	DelayRtsAfterSendUs  int  `json:"delayRtsAfterSendUs"`  // µs to hold DE after last bit
+}
+
+// Addr returns a human-readable "port@baud,DPS unit N" string for status/logs,
+// e.g. "/dev/ttyS1@9600,8N1 unit 3".
+func (d SerialDevice) Addr() string {
+	baud := d.BaudRate
+	if baud == 0 {
+		baud = 9600
+	}
+	bits := d.DataBits
+	if bits == 0 {
+		bits = 8
+	}
+	parity := d.Parity
+	if parity == "" {
+		parity = "N"
+	}
+	stop := d.StopBits
+	if stop == 0 {
+		stop = 1
+	}
+	return d.Port + "@" + strconv.Itoa(baud) + "," +
+		strconv.Itoa(bits) + parity + strconv.Itoa(stop) +
+		" unit " + strconv.Itoa(int(d.UnitID))
+}
+
 // MQTTConfig holds broker connection parameters.
 type MQTTConfig struct {
-	Broker    string    `json:"broker"`    // tcp://host:port or ssl://host:port
+	Broker    string    `json:"broker"` // tcp://host:port or ssl://host:port
 	ClientID  string    `json:"clientId"`
 	Username  string    `json:"username"`
 	Password  string    `json:"password"`
@@ -127,14 +200,14 @@ type SparkplugConfig struct {
 // DNP3Outstation represents a DNP3 outstation reachable via TCP.
 // One TCP channel per (host:port); one association per (master, outstation) link address pair.
 type DNP3Outstation struct {
-	ID                 string `json:"id"`                 // unique slug (user-defined)
-	Label              string `json:"label"`              // human-readable name
-	Host               string `json:"host"`
-	Port               int    `json:"port"`               // DNP3/IP default 20000
-	MasterAddress      uint16 `json:"masterAddress"`      // local link-layer address (typical 1)
-	OutstationAddress  uint16 `json:"outstationAddress"`  // remote link-layer address (typical 1024+)
-	ResponseTimeoutMs  int    `json:"responseTimeoutMs"`  // app-layer response timeout; default 5000
-	KeepAliveMs        int    `json:"keepAliveMs"`        // app-layer keep-alive interval; default 60000
+	ID                string `json:"id"`    // unique slug (user-defined)
+	Label             string `json:"label"` // human-readable name
+	Host              string `json:"host"`
+	Port              int    `json:"port"`              // DNP3/IP default 20000
+	MasterAddress     uint16 `json:"masterAddress"`     // local link-layer address (typical 1)
+	OutstationAddress uint16 `json:"outstationAddress"` // remote link-layer address (typical 1024+)
+	ResponseTimeoutMs int    `json:"responseTimeoutMs"` // app-layer response timeout; default 5000
+	KeepAliveMs       int    `json:"keepAliveMs"`       // app-layer keep-alive interval; default 60000
 
 	// Polling cadence (0 = disabled).
 	IntegrityScanMs int `json:"integrityScanMs"` // periodic integrity poll (class 0+1+2+3); default 3600000
@@ -195,7 +268,9 @@ type SignalMapping struct {
 	Instance   string `json:"instance"`
 
 	// Protocol selects how the source point is addressed: "dnp3" (default when
-	// empty) or "modbus".
+	// empty), "modbus" (Modbus/TCP) or "modbusrtu" (Modbus RTU over RS-485).
+	// "modbus" and "modbusrtu" share identical point identity (function/address/
+	// quantity/dataType/byteOrder) and decoding — only the transport differs.
 	Protocol string `json:"protocol"`
 
 	// SourceID references the source this point belongs to (DNP3Outstation.ID or
@@ -237,9 +312,22 @@ func (m SignalMapping) Src() string {
 	return m.OutstationID
 }
 
-// IsModbus reports whether this mapping addresses a Modbus point.
+// IsModbus reports whether this mapping addresses a Modbus/TCP point.
 func (m SignalMapping) IsModbus() bool {
 	return m.Protocol == "modbus"
+}
+
+// IsModbusRTU reports whether this mapping addresses a Modbus RTU (serial/RS-485)
+// point.
+func (m SignalMapping) IsModbusRTU() bool {
+	return m.Protocol == "modbusrtu"
+}
+
+// UsesModbusFraming reports whether this mapping uses Modbus framing (either
+// transport). Modbus/TCP and Modbus RTU carry the same PDU, so register decoding
+// and Sparkplug metric formatting are identical for both.
+func (m SignalMapping) UsesModbusFraming() bool {
+	return m.IsModbus() || m.IsModbusRTU()
 }
 
 // DefaultAppConfig returns a config with sane defaults.
@@ -257,6 +345,7 @@ func DefaultAppConfig() AppConfig {
 		},
 		Outstations:   []DNP3Outstation{},
 		ModbusDevices: []ModbusDevice{},
+		SerialDevices: []SerialDevice{},
 		Mappings:      []SignalMapping{},
 		System: SystemConfig{
 			Enabled:      false,

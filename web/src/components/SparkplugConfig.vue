@@ -2,26 +2,26 @@
   <div class="max-w-xl space-y-5">
 
     <div class="forge-panel">
-      <div class="forge-header">Sparkplug B Namespace</div>
+      <div class="forge-header">Espacio Sparkplug B</div>
       <div class="p-5 space-y-4">
 
-        <Field label="Group ID" hint="Logical site/plant group (e.g. plant-floor)">
+        <Field label="Group ID" hint="Grupo lógico de planta (ej. plant-floor)">
           <input v-model="form.groupId" class="forge-input" placeholder="plant-floor" required />
         </Field>
 
-        <Field label="Node ID" hint="Unique EoN node identifier on this broker">
+        <Field label="Node ID" hint="Identificador único del nodo EoN">
           <input v-model="form.nodeId" class="forge-input" placeholder="dnp3-gw-01" required />
         </Field>
 
         <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
           <input type="checkbox" v-model="form.birthOnConfigChange" />
-          Re-publish NBIRTH when configuration changes (while running)
+          Re-publicar NBIRTH al cambiar la configuración
         </label>
 
         <!-- Topic preview box -->
         <div class="border border-border rounded-sm p-4 space-y-1.5 font-mono text-[11px]"
              style="background:var(--tk-surface)">
-          <div class="text-muted-foreground mb-2 text-[10px] uppercase tracking-widest font-sans font-semibold">Topic Preview</div>
+          <div class="text-muted-foreground mb-2 text-[10px] uppercase tracking-widest font-sans font-semibold">Vista de tópicos</div>
           <div class="flex gap-2">
             <span class="signal-badge signal-badge--warn shrink-0">NBIRTH</span>
             <span class="text-text-secondary truncate">
@@ -53,14 +53,14 @@
 
     <div class="flex items-center gap-4">
       <button class="btn-primary" :disabled="saving" @click="save">
-        {{ saving ? 'Saving…' : 'Save Changes' }}
+        {{ saving ? 'Guardando…' : 'Guardar' }}
       </button>
-      <span v-if="saved" class="font-mono text-xs text-green-bright">✓ Saved</span>
+      <span v-if="saved" class="font-mono text-xs text-green-bright">✓ Guardado</span>
       <span v-if="error" class="font-mono text-xs text-red-bright">⚠ {{ error }}</span>
     </div>
 
     <p class="font-mono text-[10px] text-text-dim">
-      Changes take effect on next gateway start. Restart triggers a new NBIRTH sequence.
+      Aplica al reiniciar el gateway.
     </p>
   </div>
 </template>

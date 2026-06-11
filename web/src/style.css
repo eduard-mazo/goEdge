@@ -585,6 +585,27 @@ input[type="checkbox"] {
   overflow-y: auto;
 }
 
+/* Shared close (✕) button for modal headers (forge-header). */
+.modal-x {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.modal-x:hover {
+  color: var(--destructive);
+  border-color: color-mix(in srgb, var(--destructive) 45%, transparent);
+}
+.modal-x:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
 /* ── Scan-line terminal overlay ──────────────────────────────────── */
 .scanline-overlay {
   position: relative;

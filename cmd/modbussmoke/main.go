@@ -198,11 +198,13 @@ func main() {
 	}
 	fmt.Println("──────────────────────────────────────")
 
-	// Expect: connected, samples for analog:0 (float ~12.5+), analog:2 (uint ~1000+),
-	// binary:0 (coil). float32 decode sanity: level was ≥12.5.
-	lvl, okL := rec.byMetric["analog:0"]
-	cnt, okC := rec.byMetric["analog:2"]
-	_, okB := rec.byMetric["binary:0"]
+	// Expect: connected, samples for holding_register:0 (float ~12.5+),
+	// holding_register:2 (uint ~1000+), coil:0. The modbus poller routes points by
+	// function name (so holding@0 and input@0 don't collide), so the recorder keys
+	// are "<function>:<address>". float32 decode sanity: level was ≥12.5.
+	lvl, okL := rec.byMetric["holding_register:0"]
+	cnt, okC := rec.byMetric["holding_register:2"]
+	_, okB := rec.byMetric["coil:0"]
 	if !rec.connected || !okL || !okC || !okB {
 		fmt.Println("FAIL: missing connection or one of the expected points")
 		os.Exit(1)

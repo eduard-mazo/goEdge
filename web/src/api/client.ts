@@ -40,6 +40,11 @@ export const api = {
   updateModbusDevice:  (id: string, d: ModbusDevice) => req<ModbusDevice>('PUT', `/modbusDevices/${id}`, d),
   deleteModbusDevice:  (id: string) => req<null>('DELETE', `/modbusDevices/${id}`),
 
+  getSerialDevices:    ()  => req<SerialDevice[]>('GET', '/serialDevices'),
+  addSerialDevice:     (d: SerialDevice) => req<SerialDevice>('POST', '/serialDevices', d),
+  updateSerialDevice:  (id: string, d: SerialDevice) => req<SerialDevice>('PUT', `/serialDevices/${id}`, d),
+  deleteSerialDevice:  (id: string) => req<null>('DELETE', `/serialDevices/${id}`),
+
   getMappings: ()      => req<SignalMapping[]>('GET', '/mappings'),
   addMapping:  (m: SignalMapping) => req<SignalMapping>('POST', '/mappings', m),
   updateMapping: (id: string, m: SignalMapping) => req<SignalMapping>('PUT', `/mappings/${id}`, m),
@@ -139,7 +144,9 @@ export type PointType =
   | 'analog_output_status'
   | 'octet_string'
 
-export type Protocol = 'dnp3' | 'modbus'
+export type Protocol = 'dnp3' | 'modbus' | 'modbusrtu'
+
+export type SerialParity = 'N' | 'E' | 'O'
 
 export type ModbusFunction =
   | 'coil'
@@ -169,12 +176,43 @@ export interface ModbusDevice {
   enabled: boolean
 }
 
+// RS485Config maps to the Linux struct serial_rs485 (TIOCSRS485). Ignored unless
+// enabled — used for USB adapters that need software RTS/DE toggling. On the
+// ICR-3232 the kernel drives DE/RE in hardware on ttyS1, so leave disabled there.
+export interface RS485Config {
+  enabled: boolean
+  rtsHighDuringSend?: boolean   // assert RTS while transmitting (DE active-high)
+  rtsHighAfterSend?: boolean    // RTS level when idle/receiving
+  rxDuringTx?: boolean          // keep receiver on during transmit (echo)
+  delayRtsBeforeSendUs?: number // µs after asserting DE before first bit
+  delayRtsAfterSendUs?: number  // µs to hold DE after last bit
+}
+
+// SerialDevice is a Modbus RTU slave on an RS-485 / RS-232 port. Devices sharing
+// a `port` form one half-duplex multidrop bus; line settings come from the first.
+export interface SerialDevice {
+  id: string
+  label: string
+  port: string               // serial node, e.g. /dev/ttyS1, /dev/ttyUSB6, COM3
+  baudRate?: number          // default 9600
+  dataBits?: number          // default 8
+  parity?: SerialParity      // N | E | O; default N
+  stopBits?: number          // 1 | 2; default 1
+  unitId: number             // Modbus RTU slave address (1..247)
+  scanRateMs?: number        // poll cadence; default 1000
+  timeoutMs?: number         // default 1000
+  retries?: number           // default 2
+  retryDelayMs?: number      // default 200
+  rs485: RS485Config
+  enabled: boolean
+}
+
 export interface SignalMapping {
   id: string
   metricName: string
   deviceId?: string          // Sparkplug device ID; empty = node metric
 
-  protocol?: Protocol        // 'dnp3' (default) | 'modbus'
+  protocol?: Protocol        // 'dnp3' (default) | 'modbus' | 'modbusrtu'
   sourceId?: string          // ref to source (outstation/device); falls back to outstationId
   outstationId: string       // legacy DNP3 alias of sourceId
 
@@ -205,6 +243,7 @@ export interface AppConfig {
   sparkplug: SparkplugConfig
   outstations: DNP3Outstation[]
   modbusDevices: ModbusDevice[]
+  serialDevices: SerialDevice[]
   mappings: SignalMapping[]
   system: SystemConfig
 }

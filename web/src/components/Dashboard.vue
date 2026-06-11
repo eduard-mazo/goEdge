@@ -5,23 +5,23 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       <StatCard
         label="Gateway"
-        :value="store.isRunning ? 'Running' : 'Stopped'"
+        :value="store.isRunning ? 'Activo' : 'Detenido'"
         :color="store.isRunning ? 'ok' : 'dim'"
-        :sub="store.status?.uptime ? 'up ' + store.status.uptime : undefined"
+        :sub="store.status?.uptime ? 'activo ' + store.status.uptime : undefined"
       />
       <StatCard
         label="MQTT"
-        :value="store.mqttConnected ? 'Online' : 'Offline'"
+        :value="store.mqttConnected ? 'En línea' : 'Sin conexión'"
         :color="store.mqttConnected ? 'ok' : 'error'"
         :sub="store.status?.bdSeq !== undefined ? 'bdSeq ' + store.status.bdSeq : undefined"
       />
       <StatCard
-        label="Published"
+        label="Publicados"
         :value="fmtCount(store.status?.publishCount)"
         color="ok"
       />
       <StatCard
-        label="Errors"
+        label="Errores"
         :value="fmtCount(store.status?.errorCount)"
         :color="(store.status?.errorCount ?? 0) > 0 ? 'error' : 'dim'"
       />
@@ -30,14 +30,14 @@
     <!-- Outstations grid -->
     <section>
       <div class="flex items-center gap-3 mb-3">
-        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">DNP3 Outstations</h3>
+        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">Estaciones DNP3</h3>
         <div class="rule-brand flex-1" />
-        <span class="font-mono text-[10px] text-text-dim">{{ osList.length }} outstation{{ osList.length !== 1 ? 's' : '' }}</span>
+        <span class="font-mono text-[10px] text-text-dim">{{ osList.length }} est.</span>
       </div>
 
       <div v-if="!osList.length"
            class="forge-panel text-center py-10">
-        <p class="font-mono text-xs text-text-dim">No outstations configured — add one in the Outstations panel</p>
+        <p class="font-mono text-xs text-text-dim">Sin estaciones — agrégalas en el panel Estaciones</p>
       </div>
 
       <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -57,12 +57,12 @@
                 rx <span class="text-foreground font-medium">{{ o.measurementsRx ?? 0 }}</span>
               </span>
               <span class="text-text-dim" v-if="o.lastReadAt">
-                last <span class="text-foreground font-medium">{{ relTime(o.lastReadAt) }}</span>
+                últ <span class="text-foreground font-medium">{{ relTime(o.lastReadAt) }}</span>
               </span>
             </div>
           </div>
           <span :class="['signal-badge self-start shrink-0', o.connected ? 'signal-badge--on' : 'signal-badge--off']">
-            {{ o.connected ? 'OK' : 'FAULT' }}
+            {{ o.connected ? 'OK' : 'FALLA' }}
           </span>
         </div>
       </div>
@@ -71,22 +71,22 @@
     <!-- Live readings table -->
     <section>
       <div class="flex items-center gap-3 mb-3">
-        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">Live Readings</h3>
+        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">Lecturas en vivo</h3>
         <div class="rule-brand flex-1" />
-        <span class="font-mono text-[10px] text-text-dim">{{ readings.length }} signal{{ readings.length !== 1 ? 's' : '' }}</span>
+        <span class="font-mono text-[10px] text-text-dim">{{ readings.length }} señales</span>
       </div>
 
       <div v-if="!readings.length"
            class="forge-panel text-center py-10">
-        <p class="font-mono text-xs text-text-dim">No readings yet — start the gateway to begin receiving measurements</p>
+        <p class="font-mono text-xs text-text-dim">Sin lecturas — inicia el gateway para recibir datos</p>
       </div>
 
       <div v-else class="forge-panel overflow-x-auto">
         <table>
           <thead>
             <tr>
-              <th>Metric</th>
-              <th class="text-right">Value</th>
+              <th>Métrica</th>
+              <th class="text-right">Valor</th>
             </tr>
           </thead>
           <tbody>
@@ -133,8 +133,8 @@ function relTime(iso: string) {
   const t = new Date(iso).getTime()
   if (!isFinite(t)) return '—'
   const delta = Math.max(0, Date.now() - t)
-  if (delta < 60_000) return Math.round(delta / 1000) + 's ago'
-  if (delta < 3_600_000) return Math.round(delta / 60_000) + 'm ago'
-  return Math.round(delta / 3_600_000) + 'h ago'
+  if (delta < 60_000) return 'hace ' + Math.round(delta / 1000) + 's'
+  if (delta < 3_600_000) return 'hace ' + Math.round(delta / 60_000) + 'm'
+  return 'hace ' + Math.round(delta / 3_600_000) + 'h'
 }
 </script>

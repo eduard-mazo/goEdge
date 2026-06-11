@@ -11,7 +11,7 @@
     <section class="forge-panel p-4">
       <div class="flex items-center gap-3 mb-3">
         <Cpu class="h-4 w-4 text-bosque" />
-        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">Host Monitoring</h3>
+        <h3 class="font-sans font-bold text-xs uppercase tracking-widest text-text-secondary">Monitoreo del host</h3>
         <div class="rule-brand flex-1" />
         <button class="switch" :class="cfg.enabled ? 'switch--on' : ''" role="switch"
                 :aria-checked="cfg.enabled" @click="cfg.enabled = !cfg.enabled">
@@ -24,19 +24,19 @@
 
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <label class="block">
-          <span class="form-lbl">Interval (ms)</span>
+          <span class="form-lbl">Intervalo (ms)</span>
           <input v-model.number="cfg.intervalMs" type="number" min="500" step="500" class="forge-input font-mono text-[12px]" />
         </label>
         <label class="block">
-          <span class="form-lbl">Metric prefix</span>
+          <span class="form-lbl">Prefijo de métrica</span>
           <input v-model="cfg.metricPrefix" type="text" placeholder="System/" class="forge-input font-mono text-[12px]" />
         </label>
         <label class="block">
-          <span class="form-lbl">Mounts (comma-sep)</span>
+          <span class="form-lbl">Montajes (sep. coma)</span>
           <input v-model="mountsStr" type="text" placeholder="/" class="forge-input font-mono text-[12px]" />
         </label>
         <label class="block">
-          <span class="form-lbl">Interfaces (blank = all)</span>
+          <span class="form-lbl">Interfaces (vacío = todas)</span>
           <input v-model="ifacesStr" type="text" placeholder="eth0, wwan0" class="forge-input font-mono text-[12px]" />
         </label>
       </div>
@@ -45,7 +45,7 @@
       <div class="mt-4 flex flex-wrap items-center gap-3">
         <button class="channel-trigger group" @click="openModal">
           <SlidersHorizontal class="h-4 w-4 shrink-0 transition-transform group-hover:rotate-90 duration-300" />
-          <span class="font-sans font-bold text-[12px]">Configure metrics</span>
+          <span class="font-sans font-bold text-[12px]">Configurar métricas</span>
           <span class="channel-trigger__count">{{ enabledMetricCount }}<span class="opacity-50">/{{ allLeaves.length }}</span></span>
         </button>
         <div class="flex flex-wrap gap-1.5 min-w-0">
@@ -53,19 +53,19 @@
             {{ g.short }}<span v-if="disabledInGroup(g) > 0" class="opacity-50"> −{{ disabledInGroup(g) }}</span>
           </span>
           <span v-if="enabledMetricCount === 0" class="font-mono text-[10px] text-[color:var(--signal-warn)]">
-            none selected — gateway falls back to all
+            ninguna seleccionada — se publican todas
           </span>
         </div>
       </div>
 
       <div class="flex items-center gap-3 mt-4">
         <button class="btn-primary text-xs py-1.5 px-4" :disabled="saving" @click="save()">
-          {{ saving ? 'Saving…' : 'Save' }}
+          {{ saving ? 'Guardando…' : 'Guardar' }}
         </button>
         <span v-if="savedMsg" class="font-mono text-[11px]" :class="savedErr ? 'text-[color:var(--signal-fault)]' : 'text-bosque'">{{ savedMsg }}</span>
         <span class="font-mono text-[10px] text-text-dim ml-auto flex items-center gap-1.5">
           <span class="led" :class="store.isRunning ? 'led--green' : 'led--dim'" />
-          {{ store.isRunning ? 'changes apply live — no restart' : 'starts with the gateway' }}
+          {{ store.isRunning ? 'se aplica en vivo — sin reinicio' : 'inicia con el gateway' }}
         </span>
       </div>
     </section>
@@ -73,23 +73,23 @@
     <!-- ── Empty state ───────────────────────────────────────────── -->
     <div v-if="!hasData" class="forge-panel text-center py-12">
       <p class="font-mono text-xs text-text-dim">
-        <template v-if="!cfg.enabled">Switch host monitoring ON above, then Save.</template>
-        <template v-else-if="!store.isRunning">Saved — start the gateway to begin sampling.</template>
-        <template v-else>Waiting for the first sample…</template>
+        <template v-if="!cfg.enabled">Activa el monitoreo arriba y guarda.</template>
+        <template v-else-if="!store.isRunning">Guardado — inicia el gateway para muestrear.</template>
+        <template v-else>Esperando la primera muestra…</template>
       </p>
     </div>
 
     <template v-else>
       <!-- ── Dashboard customize bar ───────────────────────────────── -->
       <div class="flex items-center gap-2 flex-wrap">
-        <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-text-dim mr-1">Show</span>
+        <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-text-dim mr-1">Ver</span>
         <button v-for="w in widgetDefs" :key="w.key"
                 class="vis-pill" :class="show[w.key] ? 'vis-pill--on' : ''"
                 @click="show[w.key] = !show[w.key]">
           <component :is="show[w.key] ? Eye : EyeOff" class="h-3 w-3" />
           {{ w.label }}
         </button>
-        <button class="vis-pill ml-auto" @click="resetWidgets" title="Reset dashboard layout">
+        <button class="vis-pill ml-auto" @click="resetWidgets" title="Restablecer vista">
           <RotateCcw class="h-3 w-3" /> reset
         </button>
       </div>
@@ -112,7 +112,7 @@
 
       <!-- ── Load averages ───────────────────────────────────────── -->
       <section v-if="show.load && get('CPU/Load1') !== undefined">
-        <h4 class="sec-title">Load Average</h4>
+        <h4 class="sec-title">Carga promedio</h4>
         <div class="grid grid-cols-3 gap-3">
           <div class="stat-item"><div class="stat-item__label">1 min</div><div class="stat-item__value">{{ fmt(get('CPU/Load1')) }}</div></div>
           <div class="stat-item"><div class="stat-item__label">5 min</div><div class="stat-item__value">{{ fmt(get('CPU/Load5')) }}</div></div>
@@ -122,7 +122,7 @@
 
       <!-- ── Disks ───────────────────────────────────────────────── -->
       <section v-if="show.disks && disks.length">
-        <h4 class="sec-title">Filesystems</h4>
+        <h4 class="sec-title">Sistemas de archivos</h4>
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           <div v-for="d in disks" :key="d.name" class="forge-panel p-4">
             <div class="flex items-baseline justify-between mb-2">
@@ -130,20 +130,20 @@
               <span class="font-mono text-[12px] font-semibold" :class="barColor(d.pct)">{{ fmt(d.pct) }}%</span>
             </div>
             <div class="bar"><div class="bar__fill" :class="barFill(d.pct)" :style="{ width: clampPct(d.pct) + '%' }" /></div>
-            <div class="font-mono text-[10px] text-text-dim mt-1.5">{{ fmtMB(d.free) }} free</div>
+            <div class="font-mono text-[10px] text-text-dim mt-1.5">{{ fmtMB(d.free) }} libres</div>
           </div>
         </div>
       </section>
 
       <!-- ── Network ─────────────────────────────────────────────── -->
       <section v-if="show.network && nets.length">
-        <h4 class="sec-title">Network</h4>
+        <h4 class="sec-title">Red</h4>
         <div class="forge-panel overflow-x-auto">
           <table class="w-full">
             <thead><tr>
-              <th>Interface</th>
-              <th class="text-right">Rx rate</th>
-              <th class="text-right">Tx rate</th>
+              <th>Interfaz</th>
+              <th class="text-right">Tasa Rx</th>
+              <th class="text-right">Tasa Tx</th>
               <th class="text-right">Rx total</th>
               <th class="text-right">Tx total</th>
             </tr></thead>
@@ -162,10 +162,10 @@
 
       <!-- ── Raw readings ────────────────────────────────────────── -->
       <section v-if="show.raw">
-        <h4 class="sec-title">All published metrics</h4>
+        <h4 class="sec-title">Todas las métricas publicadas</h4>
         <div class="forge-panel overflow-x-auto">
           <table class="w-full">
-            <thead><tr><th>Metric</th><th class="text-right">Value</th></tr></thead>
+            <thead><tr><th>Métrica</th><th class="text-right">Valor</th></tr></thead>
             <tbody>
               <tr v-for="r in rawRows" :key="r.name">
                 <td class="font-mono text-[11.5px] text-text-secondary">{{ prefix }}{{ r.name }}</td>
@@ -180,15 +180,15 @@
     <!-- ── Tabbed metric configurator ────────────────────────────── -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="modalOpen" class="modal-scrim" @click.self="closeModal">
+        <div v-if="modalOpen" class="modal-scrim">
           <div class="modal-rack" role="dialog" aria-modal="true" aria-label="Configure metrics">
             <!-- header -->
             <header class="modal-rack__head">
               <div class="flex items-center gap-2.5 min-w-0">
                 <span class="led" :class="draftEnabledCount ? 'led--green' : 'led--amber'" />
                 <div class="min-w-0">
-                  <h3 class="font-sans font-extrabold text-[15px] leading-none truncate">Metric Configurator</h3>
-                  <p class="font-mono text-[10px] text-text-dim mt-1">enable categories, then fine-tune individual metrics</p>
+                  <h3 class="font-sans font-extrabold text-[15px] leading-none truncate">Configurador de métricas</h3>
+                  <p class="font-mono text-[10px] text-text-dim mt-1">activa categorías y ajusta métricas individuales</p>
                 </div>
               </div>
               <button class="rack-x ml-auto" @click="closeModal" aria-label="Close"><X class="h-4 w-4" /></button>
@@ -230,11 +230,11 @@
                 <!-- per-metric list -->
                 <div class="rack-list" :class="draft.metrics[activeTab] ? '' : 'rack-list--muted'">
                   <div class="flex items-center gap-2 mb-2">
-                    <span class="font-mono text-[9px] uppercase tracking-[0.18em] text-text-dim">Individual metrics</span>
+                    <span class="font-mono text-[9px] uppercase tracking-[0.18em] text-text-dim">Métricas individuales</span>
                     <div class="hairline flex-1" />
-                    <button class="rack-link" @click="setAllLeaves(activeGroup, true)">enable all</button>
+                    <button class="rack-link" @click="setAllLeaves(activeGroup, true)">activar todas</button>
                     <span class="text-text-dim">·</span>
-                    <button class="rack-link" @click="setAllLeaves(activeGroup, false)">disable all</button>
+                    <button class="rack-link" @click="setAllLeaves(activeGroup, false)">desactivar todas</button>
                   </div>
 
                   <button
@@ -251,12 +251,12 @@
                       <span class="block font-mono text-[10px] text-text-dim leading-tight mt-0.5 truncate">{{ leaf.desc }}</span>
                     </span>
                     <span class="metric-row__sig" :class="leafOn(leaf) ? 'metric-row__sig--live' : ''">
-                      {{ leafOn(leaf) ? 'LIVE' : 'OFF' }}
+                      {{ leafOn(leaf) ? 'ON' : 'OFF' }}
                     </span>
                   </button>
 
                   <p v-if="!draft.metrics[activeTab]" class="font-mono text-[10px] text-text-dim mt-2">
-                    Category is off — turn it ON to publish any of these.
+                    Categoría apagada — actívala para publicar estas métricas.
                   </p>
                 </div>
               </div>
@@ -265,12 +265,12 @@
             <!-- footer -->
             <footer class="modal-rack__foot">
               <span class="font-mono text-[10px] text-text-dim">
-                <span class="text-foreground font-semibold">{{ draftEnabledCount }}</span> / {{ allLeaves.length }} metrics live
+                <span class="text-foreground font-semibold">{{ draftEnabledCount }}</span> / {{ allLeaves.length }} métricas activas
               </span>
               <div class="ml-auto flex items-center gap-2">
-                <button class="btn-ghost text-xs py-1.5 px-4" @click="closeModal">Cancel</button>
+                <button class="btn-ghost text-xs py-1.5 px-4" @click="closeModal">Cancelar</button>
                 <button class="btn-primary text-xs py-1.5 px-5" :disabled="saving" @click="applyModal">
-                  {{ saving ? 'Applying…' : 'Apply' }}
+                  {{ saving ? 'Aplicando…' : 'Aplicar' }}
                 </button>
               </div>
             </footer>
@@ -298,43 +298,43 @@ interface Leaf { suffix: string; desc: string }
 interface Group { key: MetricKey; label: string; short: string; icon: unknown; blurb: string; leaves: Leaf[] }
 
 const groups: Group[] = [
-  { key: 'cpu', label: 'CPU', short: 'CPU', icon: Cpu, blurb: 'Processor utilisation.', leaves: [
-    { suffix: 'CPU/Usage_pct', desc: 'overall utilisation %' },
+  { key: 'cpu', label: 'CPU', short: 'CPU', icon: Cpu, blurb: 'Uso del procesador.', leaves: [
+    { suffix: 'CPU/Usage_pct', desc: 'uso total %' },
   ] },
-  { key: 'load', label: 'Load', short: 'Load', icon: Activity, blurb: 'Kernel run-queue load averages.', leaves: [
-    { suffix: 'CPU/Load1',  desc: '1-minute load average' },
-    { suffix: 'CPU/Load5',  desc: '5-minute load average' },
-    { suffix: 'CPU/Load15', desc: '15-minute load average' },
+  { key: 'load', label: 'Carga', short: 'Carga', icon: Activity, blurb: 'Carga promedio del kernel.', leaves: [
+    { suffix: 'CPU/Load1',  desc: 'carga 1 minuto' },
+    { suffix: 'CPU/Load5',  desc: 'carga 5 minutos' },
+    { suffix: 'CPU/Load15', desc: 'carga 15 minutos' },
   ] },
-  { key: 'memory', label: 'Memory', short: 'Mem', icon: MemoryStick, blurb: 'RAM usage and capacity.', leaves: [
-    { suffix: 'Memory/Used_pct',      desc: 'used percentage' },
-    { suffix: 'Memory/Used_MB',       desc: 'used megabytes' },
-    { suffix: 'Memory/Available_MB',  desc: 'available megabytes' },
-    { suffix: 'Memory/Total_MB',      desc: 'total megabytes' },
+  { key: 'memory', label: 'Memoria', short: 'Mem', icon: MemoryStick, blurb: 'Uso y capacidad de RAM.', leaves: [
+    { suffix: 'Memory/Used_pct',      desc: 'porcentaje usado' },
+    { suffix: 'Memory/Used_MB',       desc: 'megabytes usados' },
+    { suffix: 'Memory/Available_MB',  desc: 'megabytes disponibles' },
+    { suffix: 'Memory/Total_MB',      desc: 'megabytes totales' },
   ] },
-  { key: 'swap', label: 'Swap', short: 'Swap', icon: MemoryStick, blurb: 'Swap-space usage.', leaves: [
-    { suffix: 'Memory/Swap_Used_pct', desc: 'swap used percentage' },
+  { key: 'swap', label: 'Swap', short: 'Swap', icon: MemoryStick, blurb: 'Uso del espacio de swap.', leaves: [
+    { suffix: 'Memory/Swap_Used_pct', desc: 'porcentaje de swap usado' },
   ] },
-  { key: 'disk', label: 'Disk', short: 'Disk', icon: HardDrive, blurb: 'Per-mount filesystem usage (applies to every configured mount).', leaves: [
-    { suffix: 'Disk/<mount>/Used_pct', desc: 'used percentage per mount' },
-    { suffix: 'Disk/<mount>/Free_MB',  desc: 'free megabytes per mount' },
+  { key: 'disk', label: 'Disco', short: 'Disco', icon: HardDrive, blurb: 'Uso por montaje (cada montaje configurado).', leaves: [
+    { suffix: 'Disk/<mount>/Used_pct', desc: 'porcentaje usado por montaje' },
+    { suffix: 'Disk/<mount>/Free_MB',  desc: 'megabytes libres por montaje' },
   ] },
-  { key: 'network', label: 'Net totals', short: 'Net', icon: Network, blurb: 'Cumulative traffic counters per interface.', leaves: [
-    { suffix: 'Network/<iface>/Rx_MB', desc: 'received megabytes per iface' },
-    { suffix: 'Network/<iface>/Tx_MB', desc: 'transmitted megabytes per iface' },
+  { key: 'network', label: 'Red totales', short: 'Red', icon: Network, blurb: 'Contadores de tráfico por interfaz.', leaves: [
+    { suffix: 'Network/<iface>/Rx_MB', desc: 'megabytes recibidos por interfaz' },
+    { suffix: 'Network/<iface>/Tx_MB', desc: 'megabytes enviados por interfaz' },
   ] },
-  { key: 'networkRates', label: 'Net rates', short: 'Rate', icon: Network, blurb: 'Instantaneous throughput per interface.', leaves: [
-    { suffix: 'Network/<iface>/RxRate_kbps', desc: 'receive rate (kbps) per iface' },
-    { suffix: 'Network/<iface>/TxRate_kbps', desc: 'transmit rate (kbps) per iface' },
+  { key: 'networkRates', label: 'Red tasas', short: 'Tasa', icon: Network, blurb: 'Caudal instantáneo por interfaz.', leaves: [
+    { suffix: 'Network/<iface>/RxRate_kbps', desc: 'tasa de recepción (kbps)' },
+    { suffix: 'Network/<iface>/TxRate_kbps', desc: 'tasa de envío (kbps)' },
   ] },
-  { key: 'temperature', label: 'Temperature', short: 'Temp', icon: Thermometer, blurb: 'CPU / board thermal sensor.', leaves: [
-    { suffix: 'Temperature/CPU_C', desc: 'CPU temperature °C' },
+  { key: 'temperature', label: 'Temperatura', short: 'Temp', icon: Thermometer, blurb: 'Sensor térmico CPU / placa.', leaves: [
+    { suffix: 'Temperature/CPU_C', desc: 'temperatura CPU °C' },
   ] },
-  { key: 'uptime', label: 'Uptime', short: 'Uptime', icon: Activity, blurb: 'Time since last boot.', leaves: [
-    { suffix: 'Uptime_h', desc: 'hours since boot' },
+  { key: 'uptime', label: 'Uptime', short: 'Uptime', icon: Activity, blurb: 'Tiempo desde el arranque.', leaves: [
+    { suffix: 'Uptime_h', desc: 'horas desde el arranque' },
   ] },
-  { key: 'processes', label: 'Processes', short: 'Proc', icon: Activity, blurb: 'Running process count.', leaves: [
-    { suffix: 'Process/Count', desc: 'number of processes' },
+  { key: 'processes', label: 'Procesos', short: 'Proc', icon: Activity, blurb: 'Número de procesos.', leaves: [
+    { suffix: 'Process/Count', desc: 'número de procesos' },
   ] },
 ]
 const allLeaves = groups.flatMap((g) => g.leaves)
@@ -415,7 +415,7 @@ async function applyModal() {
   Object.assign(metrics, draft.metrics)
   disabledMetrics.clear()
   for (const s of draft.disabled) disabledMetrics.add(s)
-  await save('✓ metrics applied live')
+  await save('✓ métricas aplicadas en vivo')
   if (!savedErr.value) closeModal()
 }
 
@@ -424,7 +424,7 @@ onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => { window.removeEventListener('keydown', onKey); document.body.style.overflow = '' })
 
 // ── save (hot-applies to the running gateway) ─────────────────────
-async function save(okMsg = '✓ saved — applied live') {
+async function save(okMsg = '✓ guardado — aplicado en vivo') {
   saving.value = true
   savedMsg.value = ''
   savedErr.value = false
@@ -435,7 +435,7 @@ async function save(okMsg = '✓ saved — applied live') {
     cfg.disabledMetrics = [...disabledMetrics]
     const c = await api.setSystem({ ...cfg })
     Object.assign(cfg, c)
-    savedMsg.value = store.isRunning ? okMsg : '✓ saved — starts with the gateway'
+    savedMsg.value = store.isRunning ? okMsg : '✓ guardado — inicia con el gateway'
     setTimeout(() => (savedMsg.value = ''), 4000)
   } catch (e: unknown) {
     savedErr.value = true
@@ -452,11 +452,11 @@ function splitList(s: string): string[] {
 // ── dashboard widget visibility (persisted) ───────────────────────
 type WidgetKey = 'gauges' | 'load' | 'disks' | 'network' | 'raw'
 const widgetDefs: { key: WidgetKey; label: string }[] = [
-  { key: 'gauges',  label: 'Gauges' },
-  { key: 'load',    label: 'Load' },
-  { key: 'disks',   label: 'Disks' },
-  { key: 'network', label: 'Network' },
-  { key: 'raw',     label: 'Raw list' },
+  { key: 'gauges',  label: 'Medidores' },
+  { key: 'load',    label: 'Carga' },
+  { key: 'disks',   label: 'Discos' },
+  { key: 'network', label: 'Red' },
+  { key: 'raw',     label: 'Lista' },
 ]
 const WIDGET_LS = 'sysmon:widgets'
 const defaultWidgets = (): Record<WidgetKey, boolean> => ({ gauges: true, load: true, disks: true, network: true, raw: false })
@@ -556,9 +556,9 @@ const topGauges = computed<Gauge[]>(() => {
   const procs = get('Process/Count')
   return [
     { label: 'CPU', display: fmt1(cpu), unit: '%', pct: cpu },
-    { label: 'Memory', display: fmt1(memPct), unit: '%', pct: memPct, sub: memSub.value },
-    { label: 'Temperature', display: fmt1(temp), unit: '°C', pct: tempPct.value, sub: temp === undefined ? 'n/a' : undefined },
-    { label: 'Uptime', display: fmt1(up), unit: 'h', pct: undefined, sub: procs !== undefined ? `${procs} procs` : undefined },
+    { label: 'Memoria', display: fmt1(memPct), unit: '%', pct: memPct, sub: memSub.value },
+    { label: 'Temperatura', display: fmt1(temp), unit: '°C', pct: tempPct.value, sub: temp === undefined ? 'n/d' : undefined },
+    { label: 'Uptime', display: fmt1(up), unit: 'h', pct: undefined, sub: procs !== undefined ? `${procs} proc` : undefined },
   ]
 })
 function fmt1(v?: number): string {

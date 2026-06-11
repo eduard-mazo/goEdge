@@ -28,17 +28,31 @@ func NewStore(path string) (*Store, error) {
 // caller iterating the result can't race with a concurrent mutator (Upsert/
 // Delete reuse the backing arrays under the write lock); the element structs
 // hold only scalars/strings, so a shallow element copy is a full copy.
+//
+// Clones are always non-nil (cloneSlice): an empty source list marshals to a
+// JSON [] rather than null, so the web UI's list panels never receive null and
+// crash on `.length`/`.filter`.
 func (s *Store) Get() AppConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := s.cfg
-	c.Outstations = append([]DNP3Outstation(nil), c.Outstations...)
-	c.ModbusDevices = append([]ModbusDevice(nil), c.ModbusDevices...)
-	c.Mappings = append([]SignalMapping(nil), c.Mappings...)
-	c.System.Mounts = append([]string(nil), c.System.Mounts...)
-	c.System.Interfaces = append([]string(nil), c.System.Interfaces...)
-	c.System.DisabledMetrics = append([]string(nil), c.System.DisabledMetrics...)
+	c.Outstations = cloneSlice(c.Outstations)
+	c.ModbusDevices = cloneSlice(c.ModbusDevices)
+	c.SerialDevices = cloneSlice(c.SerialDevices)
+	c.Mappings = cloneSlice(c.Mappings)
+	c.System.Mounts = cloneSlice(c.System.Mounts)
+	c.System.Interfaces = cloneSlice(c.System.Interfaces)
+	c.System.DisabledMetrics = cloneSlice(c.System.DisabledMetrics)
 	return c
+}
+
+// cloneSlice returns a non-nil copy of s. A nil/empty input yields a non-nil
+// empty slice so JSON encodes it as [] (not null) — REST consumers (the web UI)
+// can rely on every list field being an array.
+func cloneSlice[T any](s []T) []T {
+	out := make([]T, len(s))
+	copy(out, s)
+	return out
 }
 
 // Set replaces the config and persists it.
@@ -136,6 +150,42 @@ func (s *Store) DeleteModbusDevice(id string) error {
 	mappings := s.cfg.Mappings[:0]
 	for _, m := range s.cfg.Mappings {
 		if !(m.IsModbus() && m.Src() == id) {
+			mappings = append(mappings, m)
+		}
+	}
+	s.cfg.Mappings = mappings
+	return s.save()
+}
+
+// UpsertSerialDevice adds or replaces a SerialDevice (Modbus RTU slave) by ID.
+func (s *Store) UpsertSerialDevice(d SerialDevice) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, ex := range s.cfg.SerialDevices {
+		if ex.ID == d.ID {
+			s.cfg.SerialDevices[i] = d
+			return s.save()
+		}
+	}
+	s.cfg.SerialDevices = append(s.cfg.SerialDevices, d)
+	return s.save()
+}
+
+// DeleteSerialDevice removes a serial device and any Modbus RTU mappings that
+// reference it.
+func (s *Store) DeleteSerialDevice(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.cfg.SerialDevices[:0]
+	for _, d := range s.cfg.SerialDevices {
+		if d.ID != id {
+			filtered = append(filtered, d)
+		}
+	}
+	s.cfg.SerialDevices = filtered
+	mappings := s.cfg.Mappings[:0]
+	for _, m := range s.cfg.Mappings {
+		if !(m.IsModbusRTU() && m.Src() == id) {
 			mappings = append(mappings, m)
 		}
 	}

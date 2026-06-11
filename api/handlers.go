@@ -91,6 +91,9 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/api/modbusDevices", s.handleModbusDevices)
 	s.mux.HandleFunc("/api/modbusDevices/", s.handleModbusDevice)
 
+	s.mux.HandleFunc("/api/serialDevices", s.handleSerialDevices)
+	s.mux.HandleFunc("/api/serialDevices/", s.handleSerialDevice)
+
 	s.mux.HandleFunc("/api/mappings", s.handleMappings)
 	s.mux.HandleFunc("/api/mappings/export", s.handleMappingsExport)
 	s.mux.HandleFunc("/api/mappings/import", s.handleMappingsImport)
@@ -386,6 +389,69 @@ func (s *Server) handleModbusDevice(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// --- Serial (Modbus RTU / RS-485) devices ---
+
+func (s *Server) handleSerialDevices(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeOK(w, s.gw.store.Get().SerialDevices)
+	case http.MethodPost:
+		var d config.SerialDevice
+		if err := decode(r.Body, &d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateSerialDevice(d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.gw.store.UpsertSerialDevice(d); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.gw.logEvent("info", "Serial device added: "+d.ID)
+		writeOK(w, d)
+	default:
+		writeFail(w, http.StatusMethodNotAllowed, "GET or POST")
+	}
+}
+
+func (s *Server) handleSerialDevice(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/serialDevices/")
+	if id == "" {
+		writeFail(w, http.StatusBadRequest, "missing device id")
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var d config.SerialDevice
+		if err := decode(r.Body, &d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		d.ID = id
+		if err := validateSerialDevice(d); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.gw.store.UpsertSerialDevice(d); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.gw.logEvent("info", "Serial device updated: "+id)
+		writeOK(w, d)
+	case http.MethodDelete:
+		if err := s.gw.store.DeleteSerialDevice(id); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.gw.logEvent("info", "Serial device deleted: "+id)
+		writeOK(w, nil)
+	default:
+		writeFail(w, http.StatusMethodNotAllowed, "PUT or DELETE")
+	}
+}
+
 // --- Mappings ---
 
 func (s *Server) handleMappings(w http.ResponseWriter, r *http.Request) {
@@ -605,6 +671,33 @@ func validateModbusDevice(d config.ModbusDevice) error {
 	return nil
 }
 
+var validSerialParity = map[string]bool{"": true, "N": true, "E": true, "O": true}
+
+func validateSerialDevice(d config.SerialDevice) error {
+	if d.ID == "" {
+		return fmt.Errorf("id is required")
+	}
+	if d.Port == "" {
+		return fmt.Errorf("port is required (e.g. /dev/ttyS1)")
+	}
+	if d.UnitID < 1 || d.UnitID > 247 {
+		return fmt.Errorf("unitId must be 1-247")
+	}
+	if d.BaudRate != 0 && d.BaudRate < 1 {
+		return fmt.Errorf("baudRate must be positive")
+	}
+	if d.DataBits != 0 && (d.DataBits < 5 || d.DataBits > 8) {
+		return fmt.Errorf("dataBits must be 5-8")
+	}
+	if d.StopBits != 0 && d.StopBits != 1 && d.StopBits != 2 {
+		return fmt.Errorf("stopBits must be 1 or 2")
+	}
+	if !validSerialParity[d.Parity] {
+		return fmt.Errorf("parity must be N, E or O")
+	}
+	return nil
+}
+
 var validPointTypes = map[string]bool{
 	"binary":               true,
 	"double_bit_binary":    true,
@@ -633,7 +726,7 @@ func validateMapping(sig config.SignalMapping, cfg config.AppConfig) error {
 		return fmt.Errorf("metricName is required")
 	}
 
-	if sig.IsModbus() {
+	if sig.UsesModbusFraming() {
 		if !validModbusFunctions[sig.Function] {
 			return fmt.Errorf("function must be one of coil|discrete_input|input_register|holding_register")
 		}
@@ -643,15 +736,29 @@ func validateMapping(sig config.SignalMapping, cfg config.AppConfig) error {
 		if sig.Src() == "" {
 			return fmt.Errorf("sourceId is required for modbus mappings")
 		}
+		// Modbus/TCP mappings reference a ModbusDevice; Modbus RTU mappings
+		// reference a SerialDevice. The point identity is otherwise identical.
 		found := false
-		for _, d := range cfg.ModbusDevices {
-			if d.ID == sig.Src() {
-				found = true
-				break
+		if sig.IsModbusRTU() {
+			for _, d := range cfg.SerialDevices {
+				if d.ID == sig.Src() {
+					found = true
+					break
+				}
 			}
-		}
-		if !found {
-			return fmt.Errorf("modbus device %q not found", sig.Src())
+			if !found {
+				return fmt.Errorf("serial device %q not found", sig.Src())
+			}
+		} else {
+			for _, d := range cfg.ModbusDevices {
+				if d.ID == sig.Src() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("modbus device %q not found", sig.Src())
+			}
 		}
 		return nil
 	}

@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { api, type GatewayStatus, type DNP3Outstation, type ModbusDevice, type SignalMapping } from '@/api/client'
+import { api, type GatewayStatus, type DNP3Outstation, type ModbusDevice, type SerialDevice, type SignalMapping } from '@/api/client'
 
 export const useGatewayStore = defineStore('gateway', () => {
   const status = ref<GatewayStatus | null>(null)
   const outstations = ref<DNP3Outstation[]>([])
   const modbusDevices = ref<ModbusDevice[]>([])
+  const serialDevices = ref<SerialDevice[]>([])
   const mappings = ref<SignalMapping[]>([])
   const logs = ref<{ level: string; message: string; time: string }[]>([])
   const ws = ref<WebSocket | null>(null)
@@ -19,16 +20,23 @@ export const useGatewayStore = defineStore('gateway', () => {
     } catch {}
   }
 
+  // The `?? []` guards are defensive: the API returns [] for empty lists, but a
+  // null (older backend, or a transport hiccup) must never leave these refs null
+  // — the list panels read `.length`/`.filter` directly in their templates.
   async function loadOutstations() {
-    outstations.value = await api.getOutstations()
+    outstations.value = (await api.getOutstations()) ?? []
   }
 
   async function loadModbusDevices() {
-    modbusDevices.value = await api.getModbusDevices()
+    modbusDevices.value = (await api.getModbusDevices()) ?? []
+  }
+
+  async function loadSerialDevices() {
+    serialDevices.value = (await api.getSerialDevices()) ?? []
   }
 
   async function loadMappings() {
-    mappings.value = await api.getMappings()
+    mappings.value = (await api.getMappings()) ?? []
   }
 
   async function startGateway() {
@@ -76,8 +84,8 @@ export const useGatewayStore = defineStore('gateway', () => {
   }
 
   return {
-    status, outstations, modbusDevices, mappings, logs, isRunning, mqttConnected,
-    loadStatus, loadOutstations, loadModbusDevices, loadMappings,
+    status, outstations, modbusDevices, serialDevices, mappings, logs, isRunning, mqttConnected,
+    loadStatus, loadOutstations, loadModbusDevices, loadSerialDevices, loadMappings,
     startGateway, stopGateway,
     connectWS, addLog,
   }

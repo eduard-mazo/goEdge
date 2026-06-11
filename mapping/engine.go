@@ -36,9 +36,10 @@ func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 	var metric *sparkplug.Metric
 	var value float64 = math.NaN()
 
-	// Modbus points are formatted by function: coils/discretes → boolean,
-	// registers → engineering double (scale/offset applied).
-	if sig.IsModbus() {
+	// Modbus points (TCP or RTU — identical framing) are formatted by function:
+	// coils/discretes → boolean, registers → engineering double (scale/offset
+	// applied).
+	if sig.UsesModbusFraming() {
 		switch sig.Function {
 		case "coil", "discrete_input":
 			metric = sparkplug.MetricBool(sig.MetricName, tsMs, m.BoolValue)
@@ -103,7 +104,7 @@ func Apply(sig config.SignalMapping, m source.Sample) (Result, error) {
 func BirthMetric(sig config.SignalMapping, ts uint64) *sparkplug.Metric {
 	name := sig.MetricName
 	var m *sparkplug.Metric
-	if sig.IsModbus() {
+	if sig.UsesModbusFraming() {
 		switch sig.Function {
 		case "coil", "discrete_input":
 			m = sparkplug.MetricBool(name, ts, false)

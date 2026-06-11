@@ -3,16 +3,16 @@
 
     <div class="flex items-center gap-4">
       <p class="font-sans text-sm text-text-secondary flex-1">
-        DNP3 outstations. Each one is a TCP target with its own link-layer addresses and poll cadence.
+        Estaciones DNP3 sobre TCP, cada una con su cadencia de sondeo.
       </p>
-      <button class="btn-primary text-xs py-1.5" @click="openAdd">+ Add Outstation</button>
+      <button class="btn-primary text-xs py-1.5" @click="openAdd">+ Agregar</button>
     </div>
 
     <!-- Empty state -->
     <div v-if="!store.outstations.length"
          class="forge-panel text-center py-12">
-      <p class="font-mono text-xs text-text-dim">No DNP3 outstations configured.</p>
-      <button class="btn-ghost mt-4 text-xs" @click="openAdd">Add first outstation</button>
+      <p class="font-mono text-xs text-text-dim">Sin estaciones DNP3.</p>
+      <button class="btn-ghost mt-4 text-xs" @click="openAdd">Agregar la primera</button>
     </div>
 
     <!-- Outstations table -->
@@ -20,11 +20,11 @@
       <table class="min-w-[900px]">
         <thead>
           <tr>
-            <th>ID</th><th>Label</th><th>Host : Port</th>
-            <th>Master ↔ Outstation</th>
-            <th>Polls (ms)</th>
+            <th>ID</th><th>Nombre</th><th>Host : Puerto</th>
+            <th>Maestro ↔ Estación</th>
+            <th>Sondeos (ms)</th>
             <th>Unsol</th>
-            <th>Status</th>
+            <th>Estado</th>
             <th></th>
           </tr>
         </thead>
@@ -43,20 +43,20 @@
               <span v-if="o.unsolicitedEnabled" class="text-citrico">
                 {{ [o.unsolicitedClass1 && '1', o.unsolicitedClass2 && '2', o.unsolicitedClass3 && '3'].filter(Boolean).join(',') || '–' }}
               </span>
-              <span v-else class="text-text-dim">off</span>
+              <span v-else class="text-text-dim">no</span>
             </td>
             <td>
               <span :class="['signal-badge', o.enabled ? 'signal-badge--on' : 'signal-badge--off']">
-                {{ o.enabled ? 'enabled' : 'disabled' }}
+                {{ o.enabled ? 'activa' : 'inactiva' }}
               </span>
             </td>
             <td>
               <div class="flex gap-2 justify-end">
-                <button class="btn-ghost text-xs py-0.5 px-3" @click="openEdit(o)">Edit</button>
+                <button class="btn-ghost text-xs py-0.5 px-3" @click="openEdit(o)">Editar</button>
                 <button
                   class="btn-ghost text-xs py-0.5 px-3 !border-red-base/40 !text-red-base hover:!border-red-bright hover:!text-red-bright"
                   @click="del(o.id)"
-                >Del</button>
+                >Borrar</button>
               </div>
             </td>
           </tr>
@@ -66,17 +66,20 @@
 
     <!-- Modal -->
     <Teleport to="body">
-      <div v-if="modal" class="modal-backdrop overflow-y-auto py-6" @click.self="modal = false">
+      <div v-if="modal" class="modal-backdrop overflow-y-auto py-6">
         <div class="forge-panel w-full max-w-2xl mx-auto">
-          <div class="forge-header">{{ editId ? 'Edit Outstation' : 'Add DNP3 Outstation' }}</div>
+          <div class="forge-header flex items-center justify-between gap-3">
+            <span>{{ editId ? 'Editar estación' : 'Nueva estación DNP3' }}</span>
+            <button type="button" class="modal-x" @click="modal = false" aria-label="Cerrar">✕</button>
+          </div>
           <form @submit.prevent="saveOutstation" class="p-5 space-y-4">
 
             <div class="grid grid-cols-2 gap-4">
-              <Field label="Outstation ID (unique slug)">
+              <Field label="ID (identificador único)">
                 <input v-model="form.id" class="forge-input" :disabled="!!editId" required placeholder="rtu-01" />
               </Field>
-              <Field label="Label">
-                <input v-model="form.label" class="forge-input" placeholder="Substation RTU 01" />
+              <Field label="Nombre">
+                <input v-model="form.label" class="forge-input" placeholder="RTU subestación 01" />
               </Field>
             </div>
 
@@ -84,30 +87,30 @@
               <Field label="Host" class="col-span-2">
                 <input v-model="form.host" class="forge-input" placeholder="192.168.1.100" required />
               </Field>
-              <Field label="Port" hint="DNP3/IP default 20000">
+              <Field label="Puerto" hint="DNP3/IP por defecto 20000">
                 <input v-model.number="form.port" class="forge-input" type="number" placeholder="20000" />
               </Field>
             </div>
 
             <fieldset class="space-y-3">
-              <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Link layer</legend>
+              <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Capa de enlace</legend>
               <div class="grid grid-cols-2 gap-4">
-                <Field label="Master Address" hint="Local link-layer address (typical: 1)">
+                <Field label="Dir. maestro" hint="Dirección local (típico: 1)">
                   <input v-model.number="form.masterAddress" class="forge-input" type="number" min="1" max="65519" required />
                 </Field>
-                <Field label="Outstation Address" hint="Remote link-layer address (typical: 1024+)">
+                <Field label="Dir. estación" hint="Dirección remota (típico: 1024+)">
                   <input v-model.number="form.outstationAddress" class="forge-input" type="number" min="1" max="65519" required />
                 </Field>
               </div>
             </fieldset>
 
             <fieldset class="space-y-3">
-              <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Application layer</legend>
+              <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Capa de aplicación</legend>
               <div class="grid grid-cols-2 gap-4">
-                <Field label="Response Timeout (ms)" hint="default 5000">
+                <Field label="Timeout respuesta (ms)" hint="por defecto 5000">
                   <input v-model.number="form.responseTimeoutMs" class="forge-input" type="number" placeholder="5000" />
                 </Field>
-                <Field label="Keep-Alive (ms)" hint="default 60000; 0 = disabled">
+                <Field label="Keep-Alive (ms)" hint="por defecto 60000; 0 = off">
                   <input v-model.number="form.keepAliveMs" class="forge-input" type="number" placeholder="60000" />
                 </Field>
               </div>
@@ -115,10 +118,10 @@
 
             <fieldset class="space-y-3">
               <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">
-                Periodic polls (0 = disabled)
+                Sondeos periódicos (0 = off)
               </legend>
               <div class="grid grid-cols-4 gap-3">
-                <Field label="Integrity (ms)" hint="all classes">
+                <Field label="Integridad (ms)" hint="todas las clases">
                   <input v-model.number="form.integrityScanMs" class="forge-input" type="number" placeholder="3600000" />
                 </Field>
                 <Field label="Class 1 (ms)">
@@ -134,10 +137,10 @@
             </fieldset>
 
             <fieldset class="space-y-3">
-              <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Unsolicited responses</legend>
+              <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Respuestas no solicitadas</legend>
               <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
                 <input type="checkbox" v-model="form.unsolicitedEnabled" />
-                Enable unsolicited responses at startup
+                Habilitar no solicitadas al iniciar
               </label>
               <div class="grid grid-cols-3 gap-3 pl-6" v-if="form.unsolicitedEnabled">
                 <label class="flex items-center gap-2 cursor-pointer font-sans text-sm">
@@ -152,22 +155,22 @@
               </div>
               <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
                 <input type="checkbox" v-model="form.disableUnsolOnStartup" />
-                Send DISABLE_UNSOLICITED before initial integrity poll
+                Enviar DISABLE_UNSOLICITED antes del sondeo inicial
               </label>
               <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
                 <input type="checkbox" v-model="form.startupIntegrity" />
-                Perform integrity poll on connect (recommended)
+                Sondeo de integridad al conectar (recomendado)
               </label>
             </fieldset>
 
             <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary pt-2 border-t border-border">
-              <input type="checkbox" v-model="form.enabled" /> Outstation enabled
+              <input type="checkbox" v-model="form.enabled" /> Estación habilitada
             </label>
 
             <p v-if="error" class="font-mono text-xs text-red-bright">⚠ {{ error }}</p>
             <div class="flex justify-end gap-3 pt-2 border-t border-border">
-              <button type="button" class="btn-ghost text-xs" @click="modal = false">Cancel</button>
-              <button type="submit" class="btn-primary text-xs">Save Outstation</button>
+              <button type="button" class="btn-ghost text-xs" @click="modal = false">Cancelar</button>
+              <button type="submit" class="btn-primary text-xs">Guardar</button>
             </div>
           </form>
         </div>
@@ -220,7 +223,7 @@ async function saveOutstation() {
 }
 
 async function del(id: string) {
-  if (!confirm(`Delete outstation "${id}" and all its mappings?`)) return
+  if (!confirm(`¿Eliminar la estación "${id}" y todas sus señales?`)) return
   await api.deleteOutstation(id)
   await store.loadOutstations()
   await store.loadMappings()

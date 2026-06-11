@@ -1,8 +1,8 @@
 # goMqttDnp3 — Architecture & Code Status
 
-> Industrial protocol gateway: polls **Modbus/TCP** devices and acts as a
-> **DNP3** master, normalizes their measurements, and republishes them as
-> **MQTT Sparkplug B** metrics. Ships with an embedded Vue web UI for
+> Industrial protocol gateway: polls **Modbus/TCP** and **Modbus RTU (RS-485)**
+> devices and acts as a **DNP3** master, normalizes their measurements, and
+> republishes them as **MQTT Sparkplug B** metrics. Ships with an embedded Vue web UI for
 > configuration and live monitoring. Primary deployment target is the Advantech
 > **ICR-3232** industrial router (linux/arm/v7); also builds for linux/amd64 and
 > windows/amd64.
@@ -14,12 +14,12 @@ Module: `goMqttDnp3` · Go 1.24 · ~6.3k LOC Go + Vue 3 SPA.
 ## 1. High-level data flow
 
 ```
-   ┌────────────┐   ┌────────────┐   ┌────────────┐
-   │  DNP3      │   │  Modbus    │   │  sysmon    │   field / host sources
-   │  master    │   │  poller    │   │  collector │   (each a source.Source)
-   └─────┬──────┘   └─────┬──────┘   └─────┬──────┘
-         │ OnSample       │ OnSample       │ Collect() (ticker)
-         ▼                ▼                ▼
+  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐
+  │  DNP3   │ │ Modbus   │ │ Modbus   │ │ sysmon  │  field / host sources
+  │  master │ │ /TCP     │ │ RTU/485  │ │ collect │  (each a source.Source)
+  └────┬────┘ └────┬─────┘ └────┬─────┘ └────┬────┘
+       │ OnSample  │ OnSample   │ OnSample   │ Collect() (ticker)
+       ▼           ▼            ▼            ▼
         ┌──────────────────────────────────────────┐
         │            publisher.Publisher            │
         │  ingest chan (non-blocking, 4096 buffer)  │
@@ -57,11 +57,12 @@ samples are buffered offline or shed (counted in `Status.DroppedCount`).
 | `source` | Protocol-agnostic boundary: `Source`, `Handler`, `Sample`, `Quality`, `Status`, `PointType`. | Stable |
 | `publisher` | Orchestrates sources → mapping → deadband → Sparkplug/MQTT; offline buffer; live status push. | Stable |
 | `dnp3` | DNP3 master `Source`. Stub (default) or `dnp3_ffi` cgo binding to opendnp3. | Stub stable; FFI requires vendored lib |
-| `modbus` | Modbus/TCP poller `Source`: per-device connection, typed register decoding, byte-order handling. | Stable |
-| `mapping` | `Apply` — converts a `Sample` to a Sparkplug `Metric` (scale/offset, quality properties); deadband. | Stable |
+| `modbus` | Modbus/TCP poller `Source`: per-device connection, typed register decoding, byte-order handling. Exports the transport-agnostic decode helpers (`Point`, `ResolvePoint`, `Read`, `DecodeSample`) reused by `modbusrtu`. | Stable |
+| `modbusrtu` | Modbus RTU (serial/RS-485) `Source`. Groups slaves by serial port into a half-duplex **bus** (one goroutine per port, serialized transactions); per-slave cadence/timeout/retry; optional `TIOCSRS485` direction control. Reuses `modbus`'s decode. | Stable |
+| `mapping` | `Apply` — converts a `Sample` to a Sparkplug `Metric` (scale/offset, quality properties); deadband. Modbus/TCP and RTU share one formatting path. | Stable |
 | `sparkplug` | Hand-rolled Sparkplug B v1.0 protobuf encoder, NBIRTH/NDATA/NDEATH, alias registry, topic builder. | Stable |
 | `sysmon` | Host telemetry collector (gopsutil) + ICR-323x vendor sensors (`icr` build tag). | Stable |
-| `cmd/dnp3smoke`, `cmd/modbussmoke` | Manual smoke-test entry points. | Dev tooling |
+| `cmd/dnp3smoke`, `cmd/modbussmoke`, `cmd/rtusmoke` | Manual smoke-test entry points. `rtusmoke` allocates a PTY pair and runs an in-process RTU slave — no hardware needed (Linux). | Dev tooling |
 | `scripts/sim` | Field-device simulators: DNP3 outstation (C++/opendnp3) and Modbus slave (Go). | Dev tooling |
 
 ### Source abstraction
@@ -97,8 +98,11 @@ dev server. See the `Makefile` (`make help`) for the canonical build matrix.
   goroutine (host-telemetry ticker), and the MQTT client's own callback threads.
   Counters are `atomic`; `lastVal`/`osStatus`/`sysCollector` are mutex-guarded.
 - **DNP3 master (FFI)**: opendnp3 delivers measurements on internal "strand"
-  threads → `OnSample`. **Modbus poller**: one goroutine per device on a
-  scan-rate ticker. Both feed the same `ingest` channel via a non-blocking send.
+  threads → `OnSample`. **Modbus/TCP poller**: one goroutine per device on a
+  scan-rate ticker. **Modbus RTU poller**: one goroutine per *serial port* (the
+  RS-485 bus is half-duplex, so transactions across the slaves on a port are
+  serialized; each slave keeps its own cadence). All feed the same `ingest`
+  channel via a non-blocking send.
 - **WebSocket hub**: tracks connected clients; `Broadcast` serializes writes
   under a mutex (gorilla requires serialized writes per connection).
 - **Config store**: `sync.RWMutex`; `Get()` returns a **deep copy** of the
@@ -109,7 +113,7 @@ dev server. See the `Makefile` (`make help`) for the canonical build matrix.
 ## 5. Configuration model
 
 `AppConfig` (persisted as pretty-printed JSON, written atomically via temp file +
-rename) has six sections:
+rename) has these sections:
 
 - **`mqtt`** — broker URL, client ID, credentials, QoS, keepalive, optional TLS
   (`caFile`/`certFile`/`keyFile`/`insecure`).
@@ -118,16 +122,21 @@ rename) has six sections:
   unsolicited config, startup-integrity class selection, static-poll period).
 - **`modbusDevices`** — Modbus/TCP devices (host/port, unit ID, scan rate,
   timeout, retries).
+- **`serialDevices`** — Modbus RTU slaves on an RS-485/RS-232 port (`port` e.g.
+  `/dev/ttyS1`, `baudRate`/`dataBits`/`parity`/`stopBits`, `unitId`, cadence/
+  timeout/retries, optional `rs485` `TIOCSRS485` direction control). Devices
+  sharing a `port` form one multidrop bus; line settings come from the first.
 - **`mappings`** — `SignalMapping` per point. Carries a `protocol` discriminator
-  (`dnp3`/`modbus`), source reference (`sourceId`, legacy `outstationId`), point
+  (`dnp3`/`modbus`/`modbusrtu`), source reference (`sourceId`, legacy
+  `outstationId`), point
   identity, engineering transform (scale/offset/unit), and publish controls
   (deadband, publish-on-poll).
 - **`system`** — host telemetry: enable flag, interval, metric prefix, mounts,
   interfaces, per-group `metrics` toggles, and `disabledMetrics` opt-outs.
 
 Defaults live in `config.DefaultAppConfig()`; validation lives in `api/handlers.go`
-(`validateMQTT`, `validateOutstation`, `validateModbusDevice`, `validateMapping`,
-`validateSystem`).
+(`validateMQTT`, `validateOutstation`, `validateModbusDevice`,
+`validateSerialDevice`, `validateMapping`, `validateSystem`).
 
 ---
 
@@ -147,8 +156,10 @@ All REST responses use the envelope `{ "success": bool, "message"?: string,
 | GET | `/api/system/telemetry` | Flat host-telemetry snapshot (reuses publisher's sample when running; samples on demand otherwise — works with the broker down). |
 | GET/POST | `/api/outstations` | List / upsert DNP3 outstations. |
 | PUT/DELETE | `/api/outstations/{id}` | Update / delete (cascades to mappings). |
-| GET/POST | `/api/modbusDevices` | List / upsert Modbus devices. |
+| GET/POST | `/api/modbusDevices` | List / upsert Modbus/TCP devices. |
 | PUT/DELETE | `/api/modbusDevices/{id}` | Update / delete (cascades to mappings). |
+| GET/POST | `/api/serialDevices` | List / upsert Modbus RTU (RS-485) slaves. |
+| PUT/DELETE | `/api/serialDevices/{id}` | Update / delete (cascades to mappings). |
 | GET/POST | `/api/mappings` | List / add mappings. |
 | GET | `/api/mappings/export` | Download mappings JSON. |
 | POST | `/api/mappings/import` | Replace all mappings (validated). |
@@ -158,8 +169,15 @@ All REST responses use the envelope `{ "success": bool, "message"?: string,
 | GET (upgrade) | `/ws` | WebSocket: pushes `log` and `status` events. |
 | GET | `/` | Embedded SPA (when built with `embed`). |
 
-`gateway/start` bounds the initial MQTT connect at 10 s so an unreachable broker
-returns an error instead of hanging.
+`gateway/start` never blocks on the broker: MQTT connects in the background with
+retry, and the field sources start polling immediately so an edge gateway
+collects data even when the broker is unreachable (cloud broker, link down, not
+yet provisioned). Samples accumulate in the store-and-forward buffer; the
+`OnConnect` handler publishes NBIRTH/DBIRTH, (re)subscribes NCMD, and drains the
+buffer once the broker is reached — and it re-runs on every auto-reconnect, so a
+fresh birth follows each reconnection. `Status.mqttConnected` reflects the gateway's
+own connect/disconnect tracking, not paho's `IsConnected()` (which reports true
+while merely retrying).
 
 ---
 

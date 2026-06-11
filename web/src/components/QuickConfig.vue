@@ -6,18 +6,18 @@
       <div class="flex items-center gap-3">
         <div class="rule-brand w-6 self-stretch shrink-0" style="width:2px;height:auto;display:block" />
         <h3 class="font-sans font-bold text-sm tracking-widest uppercase text-foreground">
-          Quick Config
+          Configuración rápida
         </h3>
         <span class="font-mono text-[10px] text-text-dim">MQTT · Sparkplug B</span>
       </div>
-      <button class="btn-ghost text-xs py-1 px-3" @click="$emit('close')">✕ Close</button>
+      <button class="btn-ghost text-xs py-1 px-3" @click="$emit('close')">✕ Cerrar</button>
     </div>
 
     <div class="p-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
 
       <!-- MQTT config -->
       <section class="space-y-3">
-        <p class="forge-label">MQTT Broker</p>
+        <p class="forge-label">Broker MQTT</p>
         <div class="space-y-2">
           <div>
             <label class="forge-label">Broker URI</label>
@@ -31,32 +31,32 @@
             <div>
               <label class="forge-label">QoS</label>
               <select v-model.number="mqtt.qos" class="forge-input">
-                <option :value="0">0 – At most once</option>
-                <option :value="1">1 – At least once</option>
-                <option :value="2">2 – Exactly once</option>
+                <option :value="0">0 – Máx. una vez</option>
+                <option :value="1">1 – Al menos una vez</option>
+                <option :value="2">2 – Exactamente una vez</option>
               </select>
             </div>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
-              <label class="forge-label">Username</label>
+              <label class="forge-label">Usuario</label>
               <input v-model="mqtt.username" class="forge-input" autocomplete="off" />
             </div>
             <div>
-              <label class="forge-label">Password</label>
+              <label class="forge-label">Contraseña</label>
               <input v-model="mqtt.password" class="forge-input" type="password" autocomplete="off" />
             </div>
           </div>
         </div>
         <button class="btn-primary text-xs py-1.5" :disabled="saving.mqtt" @click="saveMQTT">
-          {{ saving.mqtt ? 'Saving…' : 'Save MQTT' }}
+          {{ saving.mqtt ? 'Guardando…' : 'Guardar MQTT' }}
         </button>
-        <span v-if="saved.mqtt" class="font-mono text-xs text-green-bright ml-3">✓ saved</span>
+        <span v-if="saved.mqtt" class="font-mono text-xs text-green-bright ml-3">✓ guardado</span>
       </section>
 
       <!-- Sparkplug config -->
       <section class="space-y-3">
-        <p class="forge-label">Sparkplug B Node</p>
+        <p class="forge-label">Nodo Sparkplug B</p>
         <div class="space-y-2">
           <div>
             <label class="forge-label">Group ID</label>
@@ -74,9 +74,9 @@
           </div>
         </div>
         <button class="btn-primary text-xs py-1.5" :disabled="saving.sp" @click="saveSP">
-          {{ saving.sp ? 'Saving…' : 'Save Sparkplug' }}
+          {{ saving.sp ? 'Guardando…' : 'Guardar Sparkplug' }}
         </button>
-        <span v-if="saved.sp" class="font-mono text-xs text-green-bright ml-3">✓ saved</span>
+        <span v-if="saved.sp" class="font-mono text-xs text-green-bright ml-3">✓ guardado</span>
       </section>
 
     </div>
