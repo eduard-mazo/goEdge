@@ -195,6 +195,12 @@ type SparkplugConfig struct {
 	GroupID             string `json:"groupId"`
 	NodeID              string `json:"nodeId"`
 	BirthOnConfigChange bool   `json:"birthOnConfigChange"`
+
+	// PlantaAlias is the Planta UI alias for the consumer catalog (contract v3
+	// §1.1), published as the NBIRTH payload-level property "uns/planta" so the
+	// consumer can stage the Planta on first contact (e.g. "GSANRAFA" for
+	// group "EPM_SSFV"). Optional; omitted from NBIRTH when empty.
+	PlantaAlias string `json:"plantaAlias"`
 }
 
 // DNP3Outstation represents a DNP3 outstation reachable via TCP.
@@ -261,11 +267,18 @@ type SignalMapping struct {
 	DeviceID   string `json:"deviceId"`   // Sparkplug device ID; empty = node metric
 
 	// UNS/FIWARE decomposition published as uns/code + uns/instance metric
-	// properties (sparkplug-contract.md). Universal — any protocol. SignalCode is
-	// the canonical Attribute (defaults to MetricName); Instance is the entity
-	// sub-channel (defaults to "default"), e.g. a feeder or phase within a meter.
+	// properties (sparkplug-contract.md v3 §5.1). Universal — any protocol.
+	// SignalCode is the canonical Attribute (defaults to the LEAF of MetricName);
+	// Instance is the folder/channel path within the entity (defaults to the
+	// folder path of MetricName, else "default") — e.g. "VALV" for "VALV/VALV_ON".
 	SignalCode string `json:"signalCode"`
 	Instance   string `json:"instance"`
+
+	// Catalog metadata declared at birth only (contract v3 §5): Nombre →
+	// uns/name (display name, e.g. "Valvula abierta"); Descripcion →
+	// uns/description. Pre-fill the consumer's approve dialog; optional.
+	Nombre      string `json:"nombre"`
+	Descripcion string `json:"descripcion"`
 
 	// Protocol selects how the source point is addressed: "dnp3" (default when
 	// empty), "modbus" (Modbus/TCP) or "modbusrtu" (Modbus RTU over RS-485).

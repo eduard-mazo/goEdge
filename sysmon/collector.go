@@ -321,13 +321,16 @@ func round2(v float64) float64 {
 	return float64(int64(v*100+0.5)) / 100
 }
 
-// hostUNS splits a host metric path into its UNS code (Attribute) and entity
-// instance, mirroring the FIWARE channelization in sparkplug-contract.md:
+// hostUNS splits a host metric path into its UNS code (the LEAF attribute) and
+// folder-path instance, per sparkplug-contract.md v3 §5.1. The path here is
+// pre-prefix (the cosmetic metricPrefix is added outside and never enters
+// uns/*):
 //
-//	Uptime_h               → ("Uptime_h",      "default")
-//	CPU/Usage_pct          → ("CPU/Usage_pct", "default")
-//	Disk/root/Used_pct     → ("Disk/Used_pct", "root")
-//	Network/eth0/Rx_MB     → ("Network/Rx_MB", "eth0")
+//	Uptime_h               → ("Uptime_h",  "default")
+//	CPU/Usage_pct          → ("Usage_pct", "CPU")
+//	Memory/Free_MB         → ("Free_MB",   "Memory")
+//	Disk/root/Used_pct     → ("Used_pct",  "Disk/root")
+//	Network/eth0/Rx_MB     → ("Rx_MB",     "Network/eth0")
 func hostUNS(name string) (code, instance string) {
 	parts := make([]string, 0, 4)
 	for _, p := range strings.Split(name, "/") {
@@ -338,9 +341,9 @@ func hostUNS(name string) (code, instance string) {
 	switch len(parts) {
 	case 0:
 		return name, "default"
-	case 1, 2:
-		return strings.Join(parts, "/"), "default"
+	case 1:
+		return parts[0], "default"
 	default:
-		return parts[0] + "/" + strings.Join(parts[2:], "/"), parts[1]
+		return parts[len(parts)-1], strings.Join(parts[:len(parts)-1], "/")
 	}
 }

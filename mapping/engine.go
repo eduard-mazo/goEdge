@@ -4,6 +4,7 @@ package mapping
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"goMqttDnp3/config"
 	"goMqttDnp3/source"
@@ -140,23 +141,40 @@ func BirthMetric(sig config.SignalMapping, ts uint64) *sparkplug.Metric {
 	if sig.EngineeringUnit != "" {
 		ps.AddString("engUnit", sig.EngineeringUnit)
 	}
+	// Birth-only catalog metadata (contract v3 §5): pre-fills nombre/descripcion
+	// in the consumer's approve dialog. Not echoed on data metrics.
+	if sig.Nombre != "" {
+		ps.AddString("uns/name", sig.Nombre)
+	}
+	if sig.Descripcion != "" {
+		ps.AddString("uns/description", sig.Descripcion)
+	}
 	m.Properties = ps
 	return m
 }
 
 // unsCode returns the canonical UNS Attribute for a mapping: the operator-set
-// SignalCode, or the metric name when unset. Universal across protocols.
+// SignalCode, or the LEAF of the metric name when unset (contract v3 §5.1 —
+// "VALV/VALV_ON" → "VALV_ON"). Universal across protocols.
 func unsCode(sig config.SignalMapping) string {
 	if sig.SignalCode != "" {
 		return sig.SignalCode
 	}
+	if i := strings.LastIndexByte(sig.MetricName, '/'); i >= 0 {
+		return sig.MetricName[i+1:]
+	}
 	return sig.MetricName
 }
 
-// unsInstance returns the UNS entity instance/channel ("default" when unset).
+// unsInstance returns the UNS folder/channel path: the operator-set Instance,
+// or the folder path of the metric name ("VALV/VALV_ON" → "VALV"; flat names
+// → "default"). Contract v3 §5.1.
 func unsInstance(sig config.SignalMapping) string {
 	if sig.Instance != "" {
 		return sig.Instance
+	}
+	if i := strings.LastIndexByte(sig.MetricName, '/'); i >= 0 {
+		return sig.MetricName[:i]
 	}
 	return "default"
 }

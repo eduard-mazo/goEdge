@@ -93,3 +93,27 @@ func TestCollectSmoke(t *testing.T) {
 		}
 	}
 }
+
+// TestHostUNS pins the contract-v3 §5.1 leaf/folder split for host telemetry
+// (the cosmetic metricPrefix never enters uns/*).
+func TestHostUNS(t *testing.T) {
+	cases := []struct {
+		path     string
+		code     string
+		instance string
+	}{
+		{"Uptime_h", "Uptime_h", "default"},
+		{"CPU/Usage_pct", "Usage_pct", "CPU"},
+		{"Memory/Free_MB", "Free_MB", "Memory"},
+		{"Disk/root/Used_pct", "Used_pct", "Disk/root"},
+		{"Network/eth0/Rx_MB", "Rx_MB", "Network/eth0"},
+		{"Process/Count", "Count", "Process"},
+	}
+	for _, c := range cases {
+		code, instance := hostUNS(c.path)
+		if code != c.code || instance != c.instance {
+			t.Errorf("hostUNS(%q) = (%q,%q); want (%q,%q)",
+				c.path, code, instance, c.code, c.instance)
+		}
+	}
+}

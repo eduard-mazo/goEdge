@@ -207,6 +207,13 @@ func (p *Publisher) Start(ctx context.Context) error {
 	}
 
 	p.node = sparkplug.NewNode(sp.GroupID, sp.NodeID)
+	// Declare the Planta UI alias as an NBIRTH payload-level property (contract
+	// v3 §1.1/§5) so the consumer can stage the Planta on first contact.
+	if sp.PlantaAlias != "" {
+		nodeProps := &sparkplug.PropertySet{}
+		nodeProps.AddString("uns/planta", sp.PlantaAlias)
+		p.node.SetNodeProperties(nodeProps)
+	}
 	opts := p.node.NewClientOptions(broker, clientID, mq.Username, mq.Password)
 	if mq.TLS.Enabled {
 		tlsCfg, err := mqttTLSConfig(mq.TLS)
