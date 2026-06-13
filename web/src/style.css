@@ -2,7 +2,9 @@
    Nunito (rounded geometric) for UI/display · JetBrains Mono for data.
    Verde Cítrico (#9FCF67) primary · Verde Bosque (#0D9648) deep. */
 
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Self-hosted fonts (bundled by Vite) — devices run offline, no Google CDN. */
+@import '@fontsource-variable/nunito/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
 
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -206,10 +208,10 @@
   --radius-md:  var(--radius);
   --radius-lg:  calc(var(--radius) + 4px);
   --radius-xl:  calc(var(--radius) + 8px);
-  --font-sans:     'Nunito', ui-sans-serif, system-ui, sans-serif;
-  --font-display:  'Nunito', ui-sans-serif, system-ui, sans-serif;
-  --font-body:     'Nunito', ui-sans-serif, system-ui, sans-serif;
-  --font-mono:     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans:     'Nunito Variable', 'Nunito', ui-sans-serif, system-ui, sans-serif;
+  --font-display:  'Nunito Variable', 'Nunito', ui-sans-serif, system-ui, sans-serif;
+  --font-body:     'Nunito Variable', 'Nunito', ui-sans-serif, system-ui, sans-serif;
+  --font-mono:     'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* ── Base styles ─────────────────────────────────────────────────── */
