@@ -241,6 +241,12 @@ the current trusted-LAN model.
 - `cmd/dnp3smoke`, `cmd/modbussmoke` and `scripts/sim/*` provide end-to-end smoke
   testing against the bundled simulators (`make sim-dnp3`, `make sim-modbus`).
 - The DNP3 FFI path requires `make opendnp3-vendor` and a `dnp3_ffi` build.
+- **Full edge → gateway → TimescaleDB soak:** the end-to-end runbook and a
+  one-command harness live in the **goGateway** repo — `docs/e2e-test-guide.md`
+  and `scripts/soak.sh` (`scripts/soak.sh run 10`). It builds this producer,
+  stands up a throwaway stack, autodiscovers + approves the edge, runs a timed
+  soak, and tears down. Point its `EDGE_DIR` at this repo (the default assumes
+  a sibling checkout).
 
 **Coverage gaps worth closing:** `config.Store`, `mapping.Apply`, `modbus`
 decode/byte-order, and the `api` handlers have no automated tests yet.
