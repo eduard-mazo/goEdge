@@ -4,6 +4,7 @@
 /goMqttDnp3-arm
 /gatewayIcr323x
 /gatewayWin
+/outstation_sim
 *.exe
 *.test
 *.out
