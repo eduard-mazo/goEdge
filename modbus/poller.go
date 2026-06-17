@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,36 @@ import (
 	"goMqttDnp3/config"
 	"goMqttDnp3/source"
 )
+
+// Handler is the subset of the grid-x client handler that the gateway drives,
+// satisfied by both *mb.TCPClientHandler (Modbus/TCP) and
+// *mb.RTUOverTCPClientHandler (RTU over TCP). It lets one device struct hold
+// either transport.
+type Handler interface {
+	Connect(ctx context.Context) error
+	Close() error
+	SetSlave(slaveID byte)
+}
+
+// FrameLogger adapts a source.Handler into a grid-x modbus.Logger. The library
+// logs every raw ADU as "modbus: send % x" / "modbus: recv % x" when a Logger is
+// set; FrameLogger forwards those lines to the gateway log (the UI "Registro"),
+// tagged with the device ID, so serial/TCP traffic can be inspected live. Shared
+// by the Modbus/TCP poller and the serial RTU source; enabled per device via
+// the LogFrames config flag.
+type FrameLogger struct {
+	H      source.Handler
+	Prefix string // device tag, e.g. "MOD_SIM"
+}
+
+// Printf implements mb.Logger.
+func (l FrameLogger) Printf(format string, v ...any) {
+	if l.H == nil {
+		return
+	}
+	msg := strings.TrimRight(fmt.Sprintf(format, v...), "\n")
+	l.H.OnLog("info", l.Prefix+" "+msg)
+}
 
 // Point is a resolved read derived from a Modbus SignalMapping. The Modbus
 // framing (function codes, register/coil decoding, word/byte order) is identical
@@ -38,7 +69,7 @@ type device struct {
 	cfg    config.ModbusDevice
 	points []Point
 
-	handler *mb.TCPClientHandler
+	handler Handler
 	client  mb.Client
 	conn    bool // connection currently established
 
@@ -111,15 +142,37 @@ func (p *Poller) Start(ctx context.Context) error {
 	p.mu.Unlock()
 
 	for _, dev := range list {
-		dev.handler = mb.NewTCPClientHandler(dev.cfg.Addr())
-		dev.handler.Timeout = msOr(dev.cfg.TimeoutMs, 3000)
-		dev.handler.IdleTimeout = 60 * time.Second
-		dev.handler.SlaveID = dev.cfg.UnitID
-		dev.client = mb.NewClient(dev.handler)
+		dev.handler, dev.client = p.newHandler(dev.cfg)
 		p.wg.Add(1)
 		go p.pollDevice(cctx, dev)
 	}
 	return nil
+}
+
+// newHandler builds the grid-x handler and client for a device, choosing the
+// transport (Modbus/TCP vs RTU-over-TCP) and wiring frame logging when enabled.
+func (p *Poller) newHandler(d config.ModbusDevice) (Handler, mb.Client) {
+	timeout := msOr(d.TimeoutMs, 3000)
+	var fl mb.Logger
+	if d.LogFrames {
+		fl = FrameLogger{H: p.h, Prefix: d.ID}
+	}
+	switch d.Transport {
+	case "rtuovertcp":
+		h := mb.NewRTUOverTCPClientHandler(d.Addr())
+		h.Timeout = timeout
+		h.IdleTimeout = 60 * time.Second
+		h.Logger = fl
+		h.SetSlave(d.UnitID)
+		return h, mb.NewClient(h)
+	default: // "tcp" / "" → Modbus/TCP
+		h := mb.NewTCPClientHandler(d.Addr())
+		h.Timeout = timeout
+		h.IdleTimeout = 60 * time.Second
+		h.Logger = fl
+		h.SetSlave(d.UnitID)
+		return h, mb.NewClient(h)
+	}
 }
 
 func (p *Poller) Stop() {

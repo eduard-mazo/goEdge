@@ -68,21 +68,23 @@
           <table class="min-w-[680px]">
             <thead>
               <tr>
-                <th class="w-px"></th><th>Unidad</th><th>ID</th><th>Nombre</th>
-                <th>Sondeo</th><th>Timeout</th><th>Estado</th><th></th>
+                <th class="w-px"></th>
+                <th class="text-right">Unidad</th><th>ID</th><th>Nombre</th>
+                <th class="text-right">Sondeo</th><th class="text-right">Timeout</th>
+                <th class="text-center">Estado</th><th></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="d in bus.devices" :key="d.id">
                 <td><span class="addr-tag">{{ d.unitId }}</span></td>
-                <td class="font-mono text-[11px] text-text-secondary">#{{ d.unitId }}</td>
+                <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">#{{ d.unitId }}</td>
                 <td class="font-mono text-xs text-text-secondary">{{ d.id }}</td>
                 <td class="font-sans font-semibold text-sm">{{ d.label || '—' }}</td>
-                <td class="font-mono text-[11px] text-text-secondary">{{ fmtMs(d.scanRateMs) }}</td>
-                <td class="font-mono text-[11px] text-text-secondary">{{ fmtMs(d.timeoutMs) }}</td>
-                <td>
+                <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">{{ fmtMs(d.scanRateMs) }}</td>
+                <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">{{ fmtMs(d.timeoutMs) }}</td>
+                <td class="text-center">
                   <!-- Live link state when running, else the enabled flag -->
-                  <span v-if="store.isRunning && liveOf(d)" class="flex items-center gap-1.5 font-mono text-[10px]"
+                  <span v-if="store.isRunning && liveOf(d)" class="inline-flex items-center justify-center gap-1.5 font-mono text-[10px]"
                         :class="liveOf(d)!.connected ? 'text-[color:var(--signal-ok)]' : 'text-[color:var(--tk-red-bright)]'">
                     <span class="led" :class="liveOf(d)!.connected ? 'led--green' : 'led--red'" />
                     {{ liveOf(d)!.connected ? 'conectado' : 'sin resp.' }}
@@ -236,6 +238,10 @@
             </fieldset>
 
             <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary pt-2 border-t border-border">
+              <input type="checkbox" v-model="form.logFrames" /> Registrar tramas crudas (hex) en el Registro
+            </label>
+
+            <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
               <input type="checkbox" v-model="form.enabled" /> Esclavo habilitado
             </label>
 
@@ -270,6 +276,7 @@ const empty = (): SerialDevice => ({
   port: '/dev/ttyS1', baudRate: 9600, dataBits: 8, parity: 'N', stopBits: 1, unitId: 1,
   scanRateMs: 1000, timeoutMs: 1000, retries: 2, retryDelayMs: 200,
   rs485: { enabled: false, rtsHighDuringSend: true, rtsHighAfterSend: false, rxDuringTx: false, delayRtsBeforeSendUs: 0, delayRtsAfterSendUs: 0 },
+  logFrames: false,
   enabled: true,
 })
 const form = ref<SerialDevice>(empty())

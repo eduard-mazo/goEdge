@@ -668,6 +668,11 @@ func validateModbusDevice(d config.ModbusDevice) error {
 	if d.Port != 0 && (d.Port < 1 || d.Port > 65535) {
 		return fmt.Errorf("port must be 1-65535")
 	}
+	switch d.Transport {
+	case "", "tcp", "rtuovertcp":
+	default:
+		return fmt.Errorf("transport must be \"tcp\" or \"rtuovertcp\"")
+	}
 	return nil
 }
 

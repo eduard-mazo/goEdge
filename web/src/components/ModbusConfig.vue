@@ -19,19 +19,25 @@
       <table class="min-w-[760px]">
         <thead>
           <tr>
-            <th>ID</th><th>Nombre</th><th>Host : Puerto</th>
-            <th>Unidad</th><th>Sondeo</th><th>Timeout</th><th>Estado</th><th></th>
+            <SortTh col="id"      label="ID"           :sort="sort" @sort="toggle" />
+            <SortTh col="label"   label="Nombre"       :sort="sort" @sort="toggle" />
+            <SortTh col="addr"    label="Host : Puerto" :sort="sort" @sort="toggle" />
+            <SortTh col="unit"    label="Unidad"       align="right" :sort="sort" @sort="toggle" />
+            <SortTh col="scan"    label="Sondeo"       align="right" :sort="sort" @sort="toggle" />
+            <SortTh col="timeout" label="Timeout"      align="right" :sort="sort" @sort="toggle" />
+            <SortTh col="estado"  label="Estado"       align="center" :sort="sort" @sort="toggle" />
+            <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="d in store.modbusDevices" :key="d.id">
+          <tr v-for="d in sorted" :key="d.id">
             <td class="font-mono text-xs text-text-secondary">{{ d.id }}</td>
             <td class="font-sans font-semibold text-sm">{{ d.label }}</td>
             <td class="font-mono text-xs">{{ d.host }}:{{ d.port ?? 502 }}</td>
-            <td class="font-mono text-xs text-text-secondary">{{ d.unitId }}</td>
-            <td class="font-mono text-[11px] text-text-secondary">{{ fmtMs(d.scanRateMs) }}</td>
-            <td class="font-mono text-[11px] text-text-secondary">{{ fmtMs(d.timeoutMs) }}</td>
-            <td>
+            <td class="font-mono text-xs text-text-secondary text-right tabular-nums">{{ d.unitId }}</td>
+            <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">{{ fmtMs(d.scanRateMs) }}</td>
+            <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">{{ fmtMs(d.timeoutMs) }}</td>
+            <td class="text-center">
               <span :class="['signal-badge', d.enabled ? 'signal-badge--on' : 'signal-badge--off']">
                 {{ d.enabled ? 'activo' : 'inactivo' }}
               </span>
@@ -78,9 +84,17 @@
               </Field>
             </div>
 
-            <Field label="Unit ID" hint="Dirección del esclavo (típico: 1)">
-              <input v-model.number="form.unitId" class="forge-input" type="number" min="0" max="255" />
-            </Field>
+            <div class="grid grid-cols-2 gap-4">
+              <Field label="Unit ID" hint="Dirección del esclavo (típico: 1)">
+                <input v-model.number="form.unitId" class="forge-input" type="number" min="0" max="255" />
+              </Field>
+              <Field label="Transporte" hint="RTU sobre TCP = pasarela serie-Ethernet">
+                <select v-model="form.transport" class="forge-input">
+                  <option value="tcp">Modbus/TCP</option>
+                  <option value="rtuovertcp">RTU sobre TCP</option>
+                </select>
+              </Field>
+            </div>
 
             <fieldset class="space-y-3">
               <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Sondeo</legend>
@@ -101,6 +115,10 @@
             </fieldset>
 
             <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary pt-2 border-t border-border">
+              <input type="checkbox" v-model="form.logFrames" /> Registrar tramas crudas (hex) en el Registro
+            </label>
+
+            <label class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
               <input type="checkbox" v-model="form.enabled" /> Dispositivo habilitado
             </label>
 
@@ -122,17 +140,32 @@ import { ref } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
 import { api, type ModbusDevice } from '@/api/client'
 import Field from './Field.vue'
+import SortTh from './SortTh.vue'
+import { useSort } from '@/composables/useSort'
 
 const store  = useGatewayStore()
+
+const { sort, toggle, sorted } = useSort(() => store.modbusDevices, {
+  initial: 'id',
+  accessors: {
+    id:      (d) => d.id,
+    label:   (d) => d.label ?? '',
+    addr:    (d) => `${d.host}:${d.port ?? 502}`,
+    unit:    (d) => d.unitId,
+    scan:    (d) => d.scanRateMs ?? 0,
+    timeout: (d) => d.timeoutMs ?? 0,
+    estado:  (d) => (d.enabled ? 1 : 0),
+  },
+})
 const modal  = ref(false)
 const editId = ref('')
 const error  = ref('')
 
 const empty = (): ModbusDevice => ({
   id: '', label: '',
-  host: '', port: 502, unitId: 1,
+  host: '', port: 502, transport: 'tcp', unitId: 1,
   scanRateMs: 1000, timeoutMs: 3000, retries: 2, retryDelayMs: 500,
-  enabled: true,
+  logFrames: false, enabled: true,
 })
 const form = ref<ModbusDevice>(empty())
 

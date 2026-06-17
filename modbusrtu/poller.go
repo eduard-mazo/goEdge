@@ -143,6 +143,9 @@ func (p *Poller) Start(ctx context.Context) error {
 
 	for _, b := range list {
 		b.handler = newHandler(b.line)
+		if b.line.LogFrames {
+			b.handler.Logger = modbus.FrameLogger{H: p.h, Prefix: b.line.ID}
+		}
 		b.client = mb.NewClient(b.handler)
 		p.wg.Add(1)
 		go p.pollBus(cctx, b)

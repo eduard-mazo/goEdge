@@ -20,16 +20,18 @@
       <table class="min-w-[900px]">
         <thead>
           <tr>
-            <th>ID</th><th>Nombre</th><th>Host : Puerto</th>
-            <th>Maestro ↔ Estación</th>
+            <SortTh col="id"     label="ID"                :sort="sort" @sort="toggle" />
+            <SortTh col="label"  label="Nombre"            :sort="sort" @sort="toggle" />
+            <SortTh col="addr"   label="Host : Puerto"     :sort="sort" @sort="toggle" />
+            <SortTh col="link"   label="Maestro ↔ Estación" :sort="sort" @sort="toggle" />
             <th>Sondeos (ms)</th>
             <th>Unsol</th>
-            <th>Estado</th>
+            <SortTh col="estado" label="Estado" align="center" :sort="sort" @sort="toggle" />
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="o in store.outstations" :key="o.id">
+          <tr v-for="o in sorted" :key="o.id">
             <td class="font-mono text-xs text-text-secondary">{{ o.id }}</td>
             <td class="font-sans font-semibold text-sm">{{ o.label }}</td>
             <td class="font-mono text-xs">{{ o.host }}:{{ o.port ?? 20000 }}</td>
@@ -45,7 +47,7 @@
               </span>
               <span v-else class="text-text-dim">no</span>
             </td>
-            <td>
+            <td class="text-center">
               <span :class="['signal-badge', o.enabled ? 'signal-badge--on' : 'signal-badge--off']">
                 {{ o.enabled ? 'activa' : 'inactiva' }}
               </span>
@@ -185,8 +187,21 @@ import { ref } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
 import { api, type DNP3Outstation } from '@/api/client'
 import Field from './Field.vue'
+import SortTh from './SortTh.vue'
+import { useSort } from '@/composables/useSort'
 
 const store  = useGatewayStore()
+
+const { sort, toggle, sorted } = useSort(() => store.outstations, {
+  initial: 'id',
+  accessors: {
+    id:     (o) => o.id,
+    label:  (o) => o.label ?? '',
+    addr:   (o) => `${o.host}:${o.port ?? 20000}`,
+    link:   (o) => o.masterAddress ?? 0,
+    estado: (o) => (o.enabled ? 1 : 0),
+  },
+})
 const modal  = ref(false)
 const editId = ref('')
 const error  = ref('')

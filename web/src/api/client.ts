@@ -164,16 +164,20 @@ export type ModbusDataType =
   | 'float32'
   | 'float64'
 
+export type ModbusTransport = 'tcp' | 'rtuovertcp'
+
 export interface ModbusDevice {
   id: string
   label: string
   host: string
   port: number               // default 502
+  transport?: ModbusTransport // 'tcp' (Modbus/TCP, default) | 'rtuovertcp' (RTU framing over TCP)
   unitId: number             // Modbus slave/unit id
   scanRateMs?: number        // poll cadence; default 1000
   timeoutMs?: number         // default 3000
   retries?: number           // default 2
   retryDelayMs?: number      // default 500
+  logFrames?: boolean        // dump raw request/response frames to the log
   enabled: boolean
 }
 
@@ -205,6 +209,7 @@ export interface SerialDevice {
   retries?: number           // default 2
   retryDelayMs?: number      // default 200
   rs485: RS485Config
+  logFrames?: boolean        // dump raw request/response frames to the log
   enabled: boolean
 }
 

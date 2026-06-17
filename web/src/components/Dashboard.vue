@@ -56,9 +56,10 @@
               <span class="text-text-dim">
                 rx <span class="text-foreground font-medium">{{ o.measurementsRx ?? 0 }}</span>
               </span>
-              <span class="text-text-dim" v-if="o.lastReadAt">
+              <span class="text-text-dim" v-if="isRealTime(o.lastReadAt)">
                 últ <span class="text-foreground font-medium">{{ relTime(o.lastReadAt) }}</span>
               </span>
+              <span class="text-text-dim" v-else>sin lecturas</span>
             </div>
           </div>
           <span :class="['signal-badge self-start shrink-0', o.connected ? 'signal-badge--on' : 'signal-badge--off']">
@@ -106,6 +107,7 @@
 import { computed } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
 import StatCard from './StatCard.vue'
+import { relTime, isRealTime } from '@/lib/time'
 
 const store = useGatewayStore()
 
@@ -127,14 +129,5 @@ function fmtCount(n?: number) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
   return n.toString()
-}
-
-function relTime(iso: string) {
-  const t = new Date(iso).getTime()
-  if (!isFinite(t)) return '—'
-  const delta = Math.max(0, Date.now() - t)
-  if (delta < 60_000) return 'hace ' + Math.round(delta / 1000) + 's'
-  if (delta < 3_600_000) return 'hace ' + Math.round(delta / 60_000) + 'm'
-  return 'hace ' + Math.round(delta / 3_600_000) + 'h'
 }
 </script>

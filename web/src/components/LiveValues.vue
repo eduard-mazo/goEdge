@@ -108,8 +108,8 @@
               </td>
               <!-- protocol -->
               <td>
-                <span class="proto-tag" :class="r.protocol === 'modbus' ? 'proto-tag--mb' : 'proto-tag--dnp'">
-                  {{ r.protocol === 'modbus' ? 'MB' : 'DNP3' }}
+                <span class="proto-tag" :class="`proto-tag--${protoCls(r.protocol)}`">
+                  {{ protoLabel(r.protocol) }}
                 </span>
               </td>
               <!-- point identity -->
@@ -132,7 +132,7 @@
                 </template>
               </td>
               <!-- updated -->
-              <td class="text-right font-mono text-[10.5px] text-text-dim whitespace-nowrap">{{ ago(r.lastReadAt) }}</td>
+              <td class="text-right font-mono text-[10.5px] text-text-dim whitespace-nowrap" :title="r.lastReadAt || ''">{{ ago(r.lastReadAt) }}</td>
             </tr>
 
             <tr v-if="filtered.length === 0">
@@ -164,12 +164,13 @@ import { ref, reactive, computed, watch, onUnmounted, h } from 'vue'
 import { Search } from 'lucide-vue-next'
 import { useGatewayStore } from '@/stores/gateway'
 import type { SignalMapping } from '@/api/client'
+import { ago as agoFmt } from '@/lib/time'
 
 const store = useGatewayStore()
 
 // ── filters / sort state ──────────────────────────────────────────
 const q = ref('')
-const protocol = ref<'' | 'dnp3' | 'modbus'>('')
+const protocol = ref<'' | 'dnp3' | 'modbus' | 'modbusrtu'>('')
 const sourceFilter = ref('')
 const statusFilter = ref<'' | 'live' | 'fault'>('')
 const sort = ref<{ col: 'metric' | 'source' | 'value'; dir: 1 | -1 }>({ col: 'metric', dir: 1 })
@@ -177,8 +178,13 @@ const sort = ref<{ col: 'metric' | 'source' | 'value'; dir: 1 | -1 }>({ col: 'me
 const protocolOpts = [
   { v: '' as const, l: 'Todos' },
   { v: 'dnp3' as const, l: 'DNP3' },
-  { v: 'modbus' as const, l: 'Modbus' },
+  { v: 'modbus' as const, l: 'MB' },
+  { v: 'modbusrtu' as const, l: 'RTU' },
 ]
+
+type Proto = 'dnp3' | 'modbus' | 'modbusrtu'
+function protoLabel(p: Proto) { return p === 'modbus' ? 'MB' : p === 'modbusrtu' ? 'RTU' : 'DNP3' }
+function protoCls(p: Proto) { return p === 'modbus' ? 'mb' : p === 'modbusrtu' ? 'rtu' : 'dnp' }
 const statusOpts = [
   { v: '' as const, l: 'Todo' },
   { v: 'live' as const, l: 'En vivo' },
@@ -195,7 +201,7 @@ interface Row {
   metric: string
   source: string
   sourceLabel: string
-  protocol: 'dnp3' | 'modbus'
+  protocol: Proto
   ptype: string // normalized point type for value formatting
   point: string // human point identity
   unit: string
@@ -216,9 +222,9 @@ const rows = computed<Row[]>(() => {
     .filter((m) => m.enabled !== false)
     .map((m) => {
       const sid = srcId(m)
-      const proto = (m.protocol as 'dnp3' | 'modbus') || 'dnp3'
+      const proto = (m.protocol as Proto) || 'dnp3'
       const ss = srcStatus[sid]
-      const isMb = proto === 'modbus'
+      const isMb = proto === 'modbus' || proto === 'modbusrtu'
       const ptype = isMb
         ? (m.function === 'coil' || m.function === 'discrete_input' ? 'binary' : 'analog')
         : m.pointType
@@ -279,7 +285,7 @@ const liveCount = computed(() => rows.value.filter((r) => r.connected && r.value
 const sourcesUp = computed(() => sources.value.filter((s) => store.status?.outstations?.[s.id]?.connected).length)
 const faultCount = computed(() => sources.value.filter((s) => !(store.status?.outstations?.[s.id]?.connected)).length)
 const dnp3Count = computed(() => new Set(rows.value.filter((r) => r.protocol === 'dnp3').map((r) => r.source)).size)
-const modbusCount = computed(() => new Set(rows.value.filter((r) => r.protocol === 'modbus').map((r) => r.source)).size)
+const modbusCount = computed(() => new Set(rows.value.filter((r) => r.protocol !== 'dnp3').map((r) => r.source)).size)
 
 // ── value-change flash ────────────────────────────────────────────
 const flashing = reactive(new Set<string>())
@@ -330,17 +336,9 @@ function ledClass(r: Row) {
   if (!r.connected) return 'led--red'
   return r.value !== undefined ? 'led--green' : 'led--dim'
 }
-function ago(iso?: string): string {
-  if (!iso) return '—'
-  const t = new Date(iso).getTime()
-  if (!t || t < 0) return '—'
-  const s = Math.floor((now.value - t) / 1000)
-  if (s < 0) return 'ahora'
-  if (s < 1) return 'ahora'
-  if (s < 60) return s + 's'
-  if (s < 3600) return Math.floor(s / 60) + 'm'
-  return Math.floor(s / 3600) + 'h'
-}
+// Reactive wrapper over the shared formatter: re-renders each `now` tick and is
+// hardened against the Go zero-time / epoch sentinels (→ "—").
+const ago = (iso?: string) => agoFmt(iso, now.value)
 
 // SortGlyph — tiny inline indicator. Uses a render function (not a string
 // template) so it works in the runtime-only production build.
@@ -390,6 +388,7 @@ const SortGlyph = (props: { col: string; sort: { col: string; dir: number } }) =
 }
 .proto-tag--dnp { color: var(--epm-bosque); border-color: color-mix(in srgb, var(--epm-bosque) 40%, transparent); background: color-mix(in srgb, var(--epm-bosque) 8%, transparent); }
 .proto-tag--mb  { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 45%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 10%, transparent); }
+.proto-tag--rtu { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 55%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 16%, transparent); letter-spacing: 0.1em; }
 
 /* sticky header sits on the muted band */
 thead th { background: var(--muted); }

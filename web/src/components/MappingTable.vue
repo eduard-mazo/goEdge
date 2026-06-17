@@ -21,7 +21,7 @@
            placeholder="Filtrar por métrica, fuente, punto…" />
 
     <!-- Empty -->
-    <div v-if="!filtered.length" class="forge-panel text-center py-12">
+    <div v-if="!sorted.length" class="forge-panel text-center py-12">
       <p class="font-mono text-xs text-text-dim">
         {{ store.mappings.length ? 'Sin resultados para el filtro.' : 'Aún no hay señales.' }}
       </p>
@@ -32,19 +32,19 @@
       <table class="min-w-[960px]">
         <thead>
           <tr>
-            <th>Métrica</th>
-            <th>Proto</th>
-            <th>Fuente</th>
-            <th>Punto</th>
-            <th>Escala</th>
-            <th>UI</th>
-            <th>Banda muerta</th>
-            <th>Estado</th>
+            <SortTh col="metric"   label="Métrica"      :sort="sort" @sort="toggle" />
+            <SortTh col="proto"    label="Proto"        :sort="sort" @sort="toggle" />
+            <SortTh col="source"   label="Fuente"       :sort="sort" @sort="toggle" />
+            <SortTh col="point"    label="Punto"        :sort="sort" @sort="toggle" />
+            <SortTh col="scale"    label="Escala"       align="right" :sort="sort" @sort="toggle" />
+            <SortTh col="unit"     label="UI"           :sort="sort" @sort="toggle" />
+            <SortTh col="deadband" label="Banda muerta" align="right" :sort="sort" @sort="toggle" />
+            <SortTh col="estado"   label="Estado"       align="center" :sort="sort" @sort="toggle" />
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="m in filtered" :key="m.id">
+          <tr v-for="m in sorted" :key="m.id">
             <td class="font-mono text-xs font-medium text-foreground">{{ m.metricName }}</td>
             <td>
               <span class="proto-tag" :class="`proto-tag--${protoTag(m).cls}`">
@@ -53,12 +53,12 @@
             </td>
             <td class="font-mono text-[11px]">{{ srcId(m) }}</td>
             <td class="font-mono text-[11px] text-text-secondary whitespace-nowrap">{{ pointLabel(m) }}</td>
-            <td class="font-mono text-[11px] text-text-secondary">
+            <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">
               {{ m.scale ?? 1 }}{{ m.offset ? ' +' + m.offset : '' }}
             </td>
             <td class="font-mono text-[11px] text-text-dim">{{ m.engineeringUnit || '—' }}</td>
-            <td class="font-mono text-[11px] text-text-secondary">{{ m.deadband ?? 0 }}</td>
-            <td>
+            <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">{{ m.deadband ?? 0 }}</td>
+            <td class="text-center">
               <span :class="['signal-badge', m.enabled ? 'signal-badge--on' : 'signal-badge--off']">
                 {{ m.enabled ? 'ON' : 'OFF' }}
               </span>
@@ -251,6 +251,8 @@ import { ref, computed } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
 import { api, type SignalMapping, type Protocol, type PointType, type ModbusFunction, type ModbusDataType } from '@/api/client'
 import Field from './Field.vue'
+import SortTh from './SortTh.vue'
+import { useSort } from '@/composables/useSort'
 
 const store  = useGatewayStore()
 const modal  = ref(false)
@@ -331,12 +333,28 @@ function pointLabel(m: SignalMapping): string {
   return `${shortPoint(m.pointType)} #${m.index}${m.eventClass ? ' · C' + m.eventClass : ''}`
 }
 
-const filtered = computed(() => {
+const matched = computed(() => {
   const f = filter.value.toLowerCase()
   if (!f) return store.mappings
   return store.mappings.filter((m) =>
     `${m.metricName} ${m.deviceId ?? ''} ${srcId(m)} ${pointLabel(m)} ${m.nombre ?? ''} ${m.signalCode ?? ''}`.toLowerCase().includes(f),
   )
+})
+
+// Sortable view over the filtered rows. Computed columns (proto/source/point)
+// resolve through accessors; the rest read the matching mapping field.
+const { sort, toggle, sorted } = useSort(matched, {
+  initial: 'metric',
+  accessors: {
+    metric:   (m) => m.metricName,
+    proto:    (m) => protoTag(m).label,
+    source:   (m) => srcId(m),
+    point:    (m) => pointLabel(m),
+    scale:    (m) => m.scale ?? 1,
+    unit:     (m) => m.engineeringUnit ?? '',
+    deadband: (m) => m.deadband ?? 0,
+    estado:   (m) => (m.enabled ? 1 : 0),
+  },
 })
 
 const emptyForm = (): SignalMapping => ({

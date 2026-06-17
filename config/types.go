@@ -77,16 +77,30 @@ func (m SystemMetrics) Effective() SystemMetrics {
 // ModbusDevice represents a Modbus/TCP slave reachable over the network.
 // One TCP connection per device; reads are serialized and polled on a ticker.
 type ModbusDevice struct {
-	ID           string `json:"id"`    // unique slug (user-defined)
-	Label        string `json:"label"` // human-readable name
-	Host         string `json:"host"`
-	Port         int    `json:"port"`         // default 502
-	UnitID       uint8  `json:"unitId"`       // Modbus slave/unit id (typical 1)
-	ScanRateMs   int    `json:"scanRateMs"`   // poll cadence; default 1000
-	TimeoutMs    int    `json:"timeoutMs"`    // per-request timeout; default 3000
-	Retries      int    `json:"retries"`      // transient-error retries; default 2
-	RetryDelayMs int    `json:"retryDelayMs"` // delay between retries; default 500
-	Enabled      bool   `json:"enabled"`
+	ID    string `json:"id"`    // unique slug (user-defined)
+	Label string `json:"label"` // human-readable name
+	Host  string `json:"host"`
+	Port  int    `json:"port"` // default 502
+
+	// Transport selects the network framing. "tcp" (default when empty) is
+	// Modbus/TCP — the MBAP header, no CRC. "rtuovertcp" tunnels a Modbus RTU
+	// frame (slave id + PDU + CRC) over a raw TCP socket, as used by
+	// serial-to-Ethernet gateways and the "RTU via TCP" mode of bench tools.
+	// Both reach the device at Host:Port and share register decoding; only the
+	// on-wire framing differs.
+	Transport string `json:"transport"`
+
+	UnitID       uint8 `json:"unitId"`       // Modbus slave/unit id (typical 1)
+	ScanRateMs   int   `json:"scanRateMs"`   // poll cadence; default 1000
+	TimeoutMs    int   `json:"timeoutMs"`    // per-request timeout; default 3000
+	Retries      int   `json:"retries"`      // transient-error retries; default 2
+	RetryDelayMs int   `json:"retryDelayMs"` // delay between retries; default 500
+
+	// LogFrames dumps every raw request/response ADU (hex) to the gateway log —
+	// the UI "Registro" console — for debugging. Verbose; leave off in production.
+	LogFrames bool `json:"logFrames"`
+
+	Enabled bool `json:"enabled"`
 }
 
 // Addr returns "host:port" for the Modbus device.
@@ -130,6 +144,10 @@ type SerialDevice struct {
 	// (dmesg: "RS485 expansion board detected on ttyS1"), so leave Enabled=false
 	// there; enable it only for USB adapters that need software RTS toggling.
 	RS485 RS485Config `json:"rs485"`
+
+	// LogFrames dumps every raw request/response ADU (hex) to the gateway log —
+	// the UI "Registro" console — for debugging. Verbose; leave off in production.
+	LogFrames bool `json:"logFrames"`
 
 	Enabled bool `json:"enabled"`
 }
