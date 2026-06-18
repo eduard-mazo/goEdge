@@ -106,9 +106,12 @@ type Publisher struct {
 	// ingestLoop drains it on its own goroutine.
 	ingest chan source.Sample
 
-	// last published value per metric (for deadband)
+	// last published value per metric (for deadband) and per-metric bad-quality
+	// state (so a comm-loss marker publishes once and recovery republishes even
+	// when the value is unchanged). Both guarded by lastMu.
 	lastMu  sync.RWMutex
 	lastVal map[string]float64
+	qualBad map[string]bool
 
 	// store-and-forward offline buffer
 	bufMu  sync.Mutex
@@ -138,6 +141,7 @@ func New(cfg config.AppConfig) *Publisher {
 	p := &Publisher{
 		store:    cfg,
 		lastVal:  make(map[string]float64),
+		qualBad:  make(map[string]bool),
 		mapIdx:   make(map[string][]config.SignalMapping),
 		osStatus: make(map[string]source.Status),
 		bufMax:   500,
@@ -566,7 +570,12 @@ func (p *Publisher) handleSample(m source.Sample) {
 			slog.Warn("mapping error", "metric", sig.MetricName, "err", err)
 			continue
 		}
-		if !p.passDeadband(sig, result.Value) {
+		// Carry the computed quality onto the wire: a not-good measurement
+		// (comm-lost/restart/offline) publishes with the Sparkplug is_null bit
+		// set, which the consumer maps to calidad=Mala. Without this the bad
+		// quality is computed but silently dropped.
+		result.Metric.IsNull = result.IsNull
+		if !p.shouldPublish(sig, result.Value, result.IsNull) {
 			continue
 		}
 		if err := p.publishOrBuffer(sig.DeviceID, []*sparkplug.Metric{result.Metric}); err != nil {
@@ -577,12 +586,41 @@ func (p *Publisher) handleSample(m source.Sample) {
 }
 
 // OnStatusChange mirrors the master's per-outstation status into our snapshot.
+// On the falling edge of a device's connection (was up, now down) it marks every
+// signal mapped to that device bad-quality once, so a comm loss is recorded as
+// calidad=Mala in the historian instead of freezing the last good value.
 func (p *Publisher) OnStatusChange(s source.Status) {
 	p.statusMu.Lock()
+	prev, had := p.osStatus[s.ID]
 	p.osStatus[s.ID] = s
 	p.statusMu.Unlock()
+	// Strict falling edge only: requires a prior Connected==true so we don't fire
+	// on the OPENING/CLOSED states a channel passes through before it first
+	// connects (DNP3 in particular reports those as Connected==false).
+	if had && prev.Connected && !s.Connected {
+		p.emitBadQuality(s.ID)
+	}
 	if p.OnStatus != nil {
 		p.OnStatus(p.Status())
+	}
+}
+
+// emitBadQuality enqueues one comm-lost (not-online) sample per point mapped to
+// sourceID. Quality 0 has the online bit clear, so Quality.Good() is false and
+// mapping.Apply yields IsNull — published with is_null set (→ calidad=Mala).
+// Routed through the ingest queue like any sample, so it never blocks the
+// protocol thread that reported the status change.
+func (p *Publisher) emitBadQuality(sourceID string) {
+	now := time.Now()
+	for _, sig := range p.mappingsFor(sourceID) {
+		p.OnSample(source.Sample{
+			SourceID:  sourceID,
+			PointType: source.PointType(sig.PointType),
+			Index:     sig.Index,
+			Time:      now,
+			Quality:   0,    // online bit clear → not Good() → is_null
+			IsEvent:   true, // force handleSample past the PublishOnPoll gate
+		})
 	}
 }
 
@@ -604,14 +642,26 @@ func (p *Publisher) mappingsFor(outstationID string) []config.SignalMapping {
 	return p.mapIdx[outstationID]
 }
 
-func (p *Publisher) passDeadband(sig config.SignalMapping, cur float64) bool {
+// shouldPublish decides whether to emit this metric, accounting for both the
+// value deadband and quality transitions. A bad-quality marker always publishes
+// (and records the bad state); a good sample publishes when its value clears the
+// deadband OR when it is the first good sample after a bad one (recovery) — so
+// the historian's calidad returns to Buena even if the value never changed. The
+// deadband baseline is refreshed only on a published good value.
+func (p *Publisher) shouldPublish(sig config.SignalMapping, cur float64, bad bool) bool {
 	p.lastMu.Lock()
 	defer p.lastMu.Unlock()
+	if bad {
+		p.qualBad[sig.MetricName] = true
+		return true
+	}
+	wasBad := p.qualBad[sig.MetricName]
+	delete(p.qualBad, sig.MetricName)
 	last, ok := p.lastVal[sig.MetricName]
 	if !ok {
 		last = math.NaN()
 	}
-	if mapping.CheckDeadband(cur, last, sig.Deadband) {
+	if wasBad || mapping.CheckDeadband(cur, last, sig.Deadband) {
 		p.lastVal[sig.MetricName] = cur
 		return true
 	}
