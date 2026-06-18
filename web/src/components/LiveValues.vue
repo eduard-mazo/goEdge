@@ -71,11 +71,24 @@
 
     <!-- ── Data grid ─────────────────────────────────────────────── -->
     <div class="forge-panel overflow-hidden scanline-overlay">
-      <div class="overflow-auto max-h-[calc(100vh-340px)]">
-        <table class="w-full">
+      <div ref="viewportEl" class="overflow-auto max-h-[calc(100vh-340px)]">
+        <!-- table-fixed + colgroup: with windowed rows only ~30 cells are in the
+             DOM, so an auto layout would refit column widths to whatever rows are
+             currently visible and the header would drift out of line as you
+             scroll. Pinning the widths keeps the header locked to the data. -->
+        <table class="w-full min-w-[820px] table-fixed">
+          <colgroup>
+            <col class="w-8" />            <!-- LED -->
+            <col />                         <!-- Métrica (flexes) -->
+            <col class="w-[170px]" />       <!-- Fuente -->
+            <col class="w-[72px]" />        <!-- Proto -->
+            <col class="w-[150px]" />       <!-- Punto -->
+            <col class="w-[140px]" />       <!-- Valor -->
+            <col class="w-[120px]" />       <!-- Actualizado -->
+          </colgroup>
           <thead class="sticky top-0 z-10">
             <tr>
-              <th class="w-7"></th>
+              <th></th>
               <th class="cursor-pointer select-none" @click="sortBy('metric')">
                 Métrica <SortGlyph :col="'metric'" :sort="sort" />
               </th>
@@ -91,16 +104,17 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in filtered" :key="r.metric"
-                :class="flashing.has(r.metric) ? 'row-flash' : ''">
+            <!-- windowing spacers reserve the off-screen scroll extent -->
+            <tr v-if="padTop" class="vspacer" :style="{ height: padTop + 'px' }"><td colspan="7"></td></tr>
+            <tr v-for="{ row: r } in visible" :key="r.metric"
+                class="vrow" :class="flashing.has(r.metric) ? 'row-flash' : ''">
               <!-- connection LED -->
               <td class="text-center">
                 <span class="led inline-block" :class="ledClass(r)" :title="r.connected ? 'source online' : 'source offline'" />
               </td>
               <!-- metric -->
               <td>
-                <div class="font-mono text-[12.5px] text-foreground truncate max-w-[260px]">{{ r.metric }}</div>
-                <div v-if="r.unit" class="font-mono text-[10px] text-text-dim">{{ r.unit }}</div>
+                <div class="font-mono text-[12.5px] text-foreground truncate max-w-[280px]" :title="r.metric">{{ r.metric }}</div>
               </td>
               <!-- source -->
               <td class="font-mono text-[12px] text-text-secondary truncate max-w-[150px]" :title="r.source">
@@ -134,6 +148,7 @@
               <!-- updated -->
               <td class="text-right font-mono text-[10.5px] text-text-dim whitespace-nowrap" :title="r.lastReadAt || ''">{{ ago(r.lastReadAt) }}</td>
             </tr>
+            <tr v-if="padBottom" class="vspacer" :style="{ height: padBottom + 'px' }"><td colspan="7"></td></tr>
 
             <tr v-if="filtered.length === 0">
               <td colspan="7" class="text-center py-12">
@@ -165,6 +180,7 @@ import { Search } from 'lucide-vue-next'
 import { useGatewayStore } from '@/stores/gateway'
 import type { SignalMapping } from '@/api/client'
 import { ago as agoFmt } from '@/lib/time'
+import { useVirtualRows } from '@/composables/useVirtualRows'
 
 const store = useGatewayStore()
 
@@ -280,6 +296,10 @@ const filtered = computed<Row[]>(() => {
   return out
 })
 
+// ── virtualization (windowed rows for 1000+ signals) ──────────────
+const viewportEl = ref<HTMLElement | null>(null)
+const { visible, padTop, padBottom } = useVirtualRows(filtered, viewportEl, { rowHeight: 40 })
+
 // ── summary counters ──────────────────────────────────────────────
 const liveCount = computed(() => rows.value.filter((r) => r.connected && r.value !== undefined).length)
 const sourcesUp = computed(() => sources.value.filter((s) => store.status?.outstations?.[s.id]?.connected).length)
@@ -392,6 +412,20 @@ const SortGlyph = (props: { col: string; sort: { col: string; dir: number } }) =
 
 /* sticky header sits on the muted band */
 thead th { background: var(--muted); }
+
+/* virtualized rows: an EXACT fixed height (required by useVirtualRows) with the
+   separator drawn as an inset shadow so it never adds to the row box. */
+.vrow { height: 40px; }
+.vrow > td {
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--tk-border-dim);
+  white-space: nowrap;
+}
+.vspacer > td { padding: 0; border: none; box-shadow: none; }
+.vspacer:hover > td { background: transparent; }
 
 /* value-update flash — a quick citrico sweep across the row */
 .row-flash td {

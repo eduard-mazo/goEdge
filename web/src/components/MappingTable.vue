@@ -28,9 +28,25 @@
     </div>
 
     <!-- Table -->
-    <div v-else class="forge-panel overflow-x-auto">
-      <table class="min-w-[960px]">
-        <thead>
+    <div v-else class="forge-panel overflow-hidden">
+      <div ref="viewportEl" class="overflow-auto max-h-[calc(100vh-300px)]">
+      <!-- table-fixed + colgroup: virtualization keeps only ~30 rows in the DOM,
+           so an auto layout would re-fit the columns to the visible window and
+           the header would slip out of alignment while scrolling. Fixed widths
+           keep the header locked to the data. -->
+      <table class="w-full min-w-[1040px] table-fixed">
+        <colgroup>
+          <col />                          <!-- Métrica (flexes) -->
+          <col class="w-[72px]" />         <!-- Proto -->
+          <col class="w-[130px]" />        <!-- Fuente -->
+          <col class="w-[210px]" />        <!-- Punto -->
+          <col class="w-[96px]" />         <!-- Escala -->
+          <col class="w-[80px]" />         <!-- UI -->
+          <col class="w-[118px]" />        <!-- Banda muerta -->
+          <col class="w-[92px]" />         <!-- Estado -->
+          <col class="w-[150px]" />        <!-- Acciones -->
+        </colgroup>
+        <thead class="sticky top-0 z-10">
           <tr>
             <SortTh col="metric"   label="Métrica"      :sort="sort" @sort="toggle" />
             <SortTh col="proto"    label="Proto"        :sort="sort" @sort="toggle" />
@@ -44,7 +60,8 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="m in sorted" :key="m.id">
+          <tr v-if="padTop" class="vspacer" :style="{ height: padTop + 'px' }"><td colspan="9"></td></tr>
+          <tr v-for="{ row: m } in visible" :key="m.id" class="vrow">
             <td class="font-mono text-xs font-medium text-foreground">{{ m.metricName }}</td>
             <td>
               <span class="proto-tag" :class="`proto-tag--${protoTag(m).cls}`">
@@ -73,8 +90,16 @@
               </div>
             </td>
           </tr>
+          <tr v-if="padBottom" class="vspacer" :style="{ height: padBottom + 'px' }"><td colspan="9"></td></tr>
         </tbody>
       </table>
+      </div>
+      <div class="flex items-center justify-between px-3 py-2 border-t border-border bg-muted">
+        <span class="font-mono text-[10px] text-text-dim uppercase tracking-wider">
+          {{ sorted.length }} de {{ store.mappings.length }} señales
+        </span>
+        <span class="font-mono text-[10px] text-text-dim">ventana virtual</span>
+      </div>
     </div>
 
     <!-- Modal -->
@@ -253,6 +278,7 @@ import { api, type SignalMapping, type Protocol, type PointType, type ModbusFunc
 import Field from './Field.vue'
 import SortTh from './SortTh.vue'
 import { useSort } from '@/composables/useSort'
+import { useVirtualRows } from '@/composables/useVirtualRows'
 
 const store  = useGatewayStore()
 const modal  = ref(false)
@@ -357,6 +383,10 @@ const { sort, toggle, sorted } = useSort(matched, {
   },
 })
 
+// Windowed rendering so 1000+ mappings stay smooth (only visible rows in DOM).
+const viewportEl = ref<HTMLElement | null>(null)
+const { visible, padTop, padBottom } = useVirtualRows(sorted, viewportEl, { rowHeight: 40 })
+
 const emptyForm = (): SignalMapping => ({
   id: '', metricName: '', deviceId: '',
   protocol: 'dnp3', sourceId: '', outstationId: '',
@@ -419,4 +449,21 @@ async function importFile(ev: Event) {
 .proto-tag--dnp { color: var(--epm-bosque); border-color: color-mix(in srgb, var(--epm-bosque) 40%, transparent); background: color-mix(in srgb, var(--epm-bosque) 8%, transparent); }
 .proto-tag--mb  { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 45%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 10%, transparent); }
 .proto-tag--rtu { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 55%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 16%, transparent); letter-spacing: 0.1em; }
+
+/* sticky header sits on the muted band when the body scrolls */
+thead th { background: var(--muted); }
+
+/* virtualized rows: EXACT 40px height (required by useVirtualRows); the row
+   separator is an inset shadow so it never grows the row box. */
+.vrow { height: 40px; }
+.vrow > td {
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--tk-border-dim);
+  white-space: nowrap;
+}
+.vspacer > td { padding: 0; border: none; box-shadow: none; }
+.vspacer:hover > td { background: transparent; }
 </style>
