@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"strings"
@@ -106,6 +107,16 @@ type Publisher struct {
 	// ingestLoop drains it on its own goroutine.
 	ingest chan source.Sample
 
+	// batchWindow > 0 coalesces metrics arriving within the window into one
+	// DDATA/NDATA per device (see ingestLoop); 0 publishes each sample
+	// immediately. pending accumulates per-device (deviceID "" = node) metrics
+	// between flushes; batchMax caps a device's batch so a single payload can't
+	// grow unbounded. pending/batchMax are touched only by the ingest goroutine
+	// (and synchronously in tests), so they need no lock.
+	batchWindow time.Duration
+	batchMax    int
+	pending     map[string][]*sparkplug.Metric
+
 	// last published value per metric (for deadband) and per-metric bad-quality
 	// state (so a comm-loss marker publishes once and recovery republishes even
 	// when the value is unchanged). Both guarded by lastMu.
@@ -136,6 +147,10 @@ type bufferedMsg struct {
 // only sheds under sustained overload (which then shows up as Status.DroppedCount).
 const ingestQueueSize = 4096
 
+// batchMaxMetrics caps how many metrics accumulate for one device before its
+// batch is flushed early, bounding Sparkplug payload size when coalescing is on.
+const batchMaxMetrics = 100
+
 // New creates a Publisher from the current AppConfig.
 func New(cfg config.AppConfig) *Publisher {
 	p := &Publisher{
@@ -144,7 +159,12 @@ func New(cfg config.AppConfig) *Publisher {
 		qualBad:  make(map[string]bool),
 		mapIdx:   make(map[string][]config.SignalMapping),
 		osStatus: make(map[string]source.Status),
+		pending:  make(map[string][]*sparkplug.Metric),
+		batchMax: batchMaxMetrics,
 		bufMax:   500,
+	}
+	if cfg.MQTT.PublishBatchMs > 0 {
+		p.batchWindow = time.Duration(cfg.MQTT.PublishBatchMs) * time.Millisecond
 	}
 	for _, sig := range cfg.Mappings {
 		if !sig.Enabled {
@@ -517,9 +537,7 @@ func (p *Publisher) Status() Status {
 	p.statusMu.RUnlock()
 
 	p.lastMu.RLock()
-	for k, v := range p.lastVal {
-		s.LastReadings[k] = v
-	}
+	maps.Copy(s.LastReadings, p.lastVal)
 	p.lastMu.RUnlock()
 	return s
 }
@@ -541,10 +559,32 @@ func (p *Publisher) OnSample(m source.Sample) {
 
 // ingestLoop drains the queue on its own goroutine, doing mapping + deadband +
 // publish off the protocol threads. Exits when ingest is closed (Stop).
+//
+// With batching off it publishes each sample as it arrives. With batching on it
+// accumulates per-device metrics (handleSample → emit) and flushes them as one
+// message per device on the flush timer, plus once more when the channel closes
+// so nothing buffered is lost at shutdown.
 func (p *Publisher) ingestLoop() {
 	defer p.wg.Done()
-	for m := range p.ingest {
-		p.handleSample(m)
+	if p.batchWindow <= 0 {
+		for m := range p.ingest {
+			p.handleSample(m)
+		}
+		return
+	}
+	t := time.NewTicker(p.batchWindow)
+	defer t.Stop()
+	for {
+		select {
+		case m, ok := <-p.ingest:
+			if !ok {
+				p.flushPending()
+				return
+			}
+			p.handleSample(m)
+		case <-t.C:
+			p.flushPending()
+		}
 	}
 }
 
@@ -578,10 +618,49 @@ func (p *Publisher) handleSample(m source.Sample) {
 		if !p.shouldPublish(sig, result.Value, result.IsNull) {
 			continue
 		}
-		if err := p.publishOrBuffer(sig.DeviceID, []*sparkplug.Metric{result.Metric}); err != nil {
+		p.emit(sig.DeviceID, result.Metric)
+	}
+}
+
+// emit routes one mapped metric to its device's outgoing message. With batching
+// off (batchWindow==0) it publishes immediately (legacy: one message per
+// signal); with batching on it appends to the device's pending batch, flushing
+// early when that batch reaches batchMax. Ingest-goroutine only (or synchronous
+// in tests), so pending needs no lock.
+func (p *Publisher) emit(deviceID string, m *sparkplug.Metric) {
+	if p.batchWindow <= 0 {
+		if err := p.publishOrBuffer(deviceID, []*sparkplug.Metric{m}); err != nil {
 			p.errorCount.Add(1)
-			slog.Warn("publish failed", "metric", sig.MetricName, "err", err)
+			slog.Warn("publish failed", "device", deviceID, "err", err)
 		}
+		return
+	}
+	p.pending[deviceID] = append(p.pending[deviceID], m)
+	if len(p.pending[deviceID]) >= p.batchMax {
+		p.flushDevice(deviceID)
+	}
+}
+
+// flushDevice publishes (or buffers) one device's pending batch and clears it;
+// no-op when nothing is pending. Ingest-goroutine only.
+func (p *Publisher) flushDevice(deviceID string) {
+	metrics := p.pending[deviceID]
+	if len(metrics) == 0 {
+		return
+	}
+	delete(p.pending, deviceID)
+	if err := p.publishOrBuffer(deviceID, metrics); err != nil {
+		p.errorCount.Add(1)
+		slog.Warn("batch publish failed", "device", deviceID, "err", err)
+	}
+}
+
+// flushPending flushes every device's pending batch. Called on the flush timer
+// and once when the ingest channel closes (Stop). Ingest-goroutine only.
+// Deleting the current key during range is safe in Go.
+func (p *Publisher) flushPending() {
+	for deviceID := range p.pending {
+		p.flushDevice(deviceID)
 	}
 }
 

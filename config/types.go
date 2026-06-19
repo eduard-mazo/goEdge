@@ -197,6 +197,13 @@ type MQTTConfig struct {
 	QoS       byte      `json:"qos"`       // 0, 1, or 2
 	Keepalive int       `json:"keepalive"` // seconds; 0 = library default
 	TLS       TLSConfig `json:"tls"`
+
+	// PublishBatchMs coalesces metrics that arrive within this window into a
+	// single Sparkplug DDATA/NDATA message per device, instead of one message
+	// per signal. A polled Modbus device reads all its points within a few ms of
+	// each other, so they collapse into one message. 0 (default) publishes each
+	// sample immediately (legacy behavior).
+	PublishBatchMs int `json:"publishBatchMs"`
 }
 
 // TLSConfig holds optional TLS parameters for the MQTT connection.

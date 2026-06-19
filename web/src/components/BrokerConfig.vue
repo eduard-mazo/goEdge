@@ -36,6 +36,12 @@
           </Field>
         </div>
 
+        <div class="grid grid-cols-2 gap-4">
+          <Field label="Agrupar publicaciones (ms)" hint="Une las señales que llegan dentro de la ventana en un solo mensaje por dispositivo · 0 = una por señal">
+            <input v-model.number="form.publishBatchMs" class="forge-input" type="number" min="0" placeholder="0" />
+          </Field>
+        </div>
+
       </div>
     </div>
 
@@ -94,7 +100,7 @@ const error  = ref('')
 
 const form = ref<MQTTConfig>({
   broker: 'tcp://localhost:1883', clientId: 'goMqttDnp3',
-  username: '', password: '', qos: 1, keepalive: 60,
+  username: '', password: '', qos: 1, keepalive: 60, publishBatchMs: 0,
   tls: { enabled: false },
 })
 

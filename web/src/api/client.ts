@@ -65,6 +65,7 @@ export interface MQTTConfig {
   password?: string
   qos: number
   keepalive: number
+  publishBatchMs?: number
   tls: TLSConfig
 }
 

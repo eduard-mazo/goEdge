@@ -605,6 +605,9 @@ func validateMQTT(cfg config.MQTTConfig) error {
 	if cfg.ClientID == "" {
 		return fmt.Errorf("clientId is required")
 	}
+	if cfg.PublishBatchMs < 0 {
+		return fmt.Errorf("publishBatchMs must be >= 0 (0 disables batching)")
+	}
 	return nil
 }
 
