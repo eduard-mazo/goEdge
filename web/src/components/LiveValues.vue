@@ -423,6 +423,11 @@ thead th { background: var(--muted); }
   border-bottom: none;
   box-shadow: inset 0 -1px 0 var(--tk-border-dim);
   white-space: nowrap;
+  /* Fixed-layout columns don't shrink to content, so any cell longer than its
+     <col> width would overflow and bleed under the NEXT column's header. Clip
+     every cell to its column so the header stays locked to the data. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .vspacer > td { padding: 0; border: none; box-shadow: none; }
 .vspacer:hover > td { background: transparent; }

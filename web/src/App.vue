@@ -162,7 +162,6 @@
       <!-- Tab content -->
       <main class="flex-1 min-h-0 overflow-auto p-4 md:p-6">
         <Dashboard       v-if="activeTab === 'dashboard'" />
-        <LiveValues      v-if="activeTab === 'live'" />
         <BrokerConfig    v-if="activeTab === 'broker'" />
         <SparkplugCfg    v-if="activeTab === 'sparkplug'" />
         <OutstationsConfig v-if="activeTab === 'outstations'" />
@@ -181,7 +180,6 @@ import { ref, computed, onMounted } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
 import { api } from '@/api/client'
 import Dashboard     from '@/components/Dashboard.vue'
-import LiveValues    from '@/components/LiveValues.vue'
 import BrokerConfig  from '@/components/BrokerConfig.vue'
 import SparkplugCfg  from '@/components/SparkplugConfig.vue'
 import OutstationsConfig from '@/components/OutstationsConfig.vue'
@@ -192,7 +190,7 @@ import LogConsole    from '@/components/LogConsole.vue'
 import QuickConfig   from '@/components/QuickConfig.vue'
 import SystemPanel   from '@/components/SystemPanel.vue'
 import {
-  LayoutDashboard, Activity, Wifi, Zap, Server, Cpu, Cable,
+  LayoutDashboard, Wifi, Zap, Server, Cpu, Cable,
   Waypoints, Gauge, ScrollText, Settings, Menu, X,
 } from 'lucide-vue-next'
 
@@ -203,7 +201,6 @@ const store = useGatewayStore()
 
 const tabs = [
   { id: 'dashboard',  label: 'Resumen',      icon: LayoutDashboard },
-  { id: 'live',       label: 'En vivo',      icon: Activity        },
   { id: 'broker',     label: 'Broker',       icon: Wifi            },
   { id: 'sparkplug',  label: 'Sparkplug',    icon: Zap             },
   { id: 'outstations',label: 'Estaciones',   icon: Server          },
