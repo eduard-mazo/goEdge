@@ -156,6 +156,11 @@ const ingestQueueSize = 4096
 // batch is flushed early, bounding Sparkplug payload size when coalescing is on.
 const batchMaxMetrics = 100
 
+// defaultBatchWindow is the coalescing window adopted when PublishBatchMs is
+// unset (0). Small enough to be imperceptible at SCADA scan rates (~1s) yet wide
+// enough to collapse a whole scan's points into one DDATA/NDATA per device.
+const defaultBatchWindow = 200 * time.Millisecond
+
 // New creates a Publisher from the current AppConfig.
 func New(cfg config.AppConfig) *Publisher {
 	p := &Publisher{
@@ -168,8 +173,14 @@ func New(cfg config.AppConfig) *Publisher {
 		batchMax: batchMaxMetrics,
 		bufMax:   500,
 	}
-	if cfg.MQTT.PublishBatchMs > 0 {
+	// Coalescing is on by default: a positive value sets the window explicitly, 0
+	// (unset) adopts defaultBatchWindow, and a negative value is the explicit
+	// opt-out (legacy per-sample publish, batchWindow == 0).
+	switch {
+	case cfg.MQTT.PublishBatchMs > 0:
 		p.batchWindow = time.Duration(cfg.MQTT.PublishBatchMs) * time.Millisecond
+	case cfg.MQTT.PublishBatchMs == 0:
+		p.batchWindow = defaultBatchWindow
 	}
 	for _, sig := range cfg.Mappings {
 		if !sig.Enabled {

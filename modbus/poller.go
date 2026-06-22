@@ -240,12 +240,17 @@ func (p *Poller) scan(ctx context.Context, dev *device) {
 		p.setConn(dev, true, "")
 	}
 
+	// Buffer the scan's samples and emit them as a single end-of-scan burst so the
+	// publisher's coalescing window groups the whole scan into one message instead
+	// of scattering points (which matters most on a slow/laggy link).
+	batch := make([]source.Sample, 0, len(dev.points))
 	for _, pt := range dev.points {
 		if ctx.Err() != nil {
 			return
 		}
 		raw, err := p.read(ctx, dev, pt)
 		if err != nil {
+			p.emitBurst(batch) // publish whatever was read before the failure
 			// Treat a read failure as a dropped connection; reconnect next tick.
 			_ = dev.handler.Close()
 			dev.conn = false
@@ -260,9 +265,19 @@ func (p *Poller) scan(ctx context.Context, dev *device) {
 		dev.status.MeasurementsRx++
 		dev.status.LastReadAt = time.Now()
 		dev.mu.Unlock()
-		if p.h != nil {
-			p.h.OnSample(s)
-		}
+		batch = append(batch, s)
+	}
+	p.emitBurst(batch)
+}
+
+// emitBurst hands a scan's buffered samples to the handler back-to-back, so the
+// publisher's coalescing window groups them into one message.
+func (p *Poller) emitBurst(batch []source.Sample) {
+	if p.h == nil {
+		return
+	}
+	for i := range batch {
+		p.h.OnSample(batch[i])
 	}
 }
 

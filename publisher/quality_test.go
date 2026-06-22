@@ -45,7 +45,12 @@ func (p *Publisher) drainTestBuffer() []bufferedMsg {
 }
 
 func TestHandleSample_BadQualitySetsIsNull(t *testing.T) {
-	cfg := config.AppConfig{Mappings: []config.SignalMapping{modbusMapping("MOD1", "T1", 10)}}
+	// PublishBatchMs: -1 opts out of coalescing so emit publishes synchronously,
+	// which drainTestBuffer relies on.
+	cfg := config.AppConfig{
+		MQTT:     config.MQTTConfig{PublishBatchMs: -1},
+		Mappings: []config.SignalMapping{modbusMapping("MOD1", "T1", 10)},
+	}
 	p := New(cfg)
 
 	// Good read → published, value carried, not null.
@@ -72,7 +77,10 @@ func TestHandleSample_BadQualitySetsIsNull(t *testing.T) {
 func TestHandleSample_RecoveryRepublishesThroughDeadband(t *testing.T) {
 	m := modbusMapping("MOD1", "T1", 10)
 	m.Deadband = 100 // huge deadband: an unchanged value would normally be suppressed
-	cfg := config.AppConfig{Mappings: []config.SignalMapping{m}}
+	cfg := config.AppConfig{
+		MQTT:     config.MQTTConfig{PublishBatchMs: -1}, // synchronous publish for drainTestBuffer
+		Mappings: []config.SignalMapping{m},
+	}
 	p := New(cfg)
 
 	p.handleSample(regSample("MOD1", 10, source.QualityOnline, 42)) // good, baseline=42

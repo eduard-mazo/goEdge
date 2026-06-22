@@ -605,8 +605,10 @@ func validateMQTT(cfg config.MQTTConfig) error {
 	if cfg.ClientID == "" {
 		return fmt.Errorf("clientId is required")
 	}
-	if cfg.PublishBatchMs < 0 {
-		return fmt.Errorf("publishBatchMs must be >= 0 (0 disables batching)")
+	// Any int is valid: >0 sets the coalescing window, 0 adopts the default
+	// window (on by default), negative is the explicit opt-out.
+	if cfg.PublishBatchMs > 60000 {
+		return fmt.Errorf("publishBatchMs is unreasonably large (max 60000)")
 	}
 	return nil
 }

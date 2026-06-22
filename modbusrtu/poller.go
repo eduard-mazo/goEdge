@@ -293,12 +293,19 @@ func (p *Poller) closeBus(b *bus, reason string) {
 // its remaining points — the bus stays open so the other slaves still get polled.
 func (p *Poller) pollDevice(ctx context.Context, b *bus, d *rtuDevice) bool {
 	b.handler.SetSlave(d.cfg.UnitID)
+	// Buffer the scan's samples and emit them as a single end-of-scan burst.
+	// Reads are sequential and, on a slow RS-485 bus, a whole scan can span far
+	// more than the publisher's coalescing window; emitting inline would scatter
+	// the points across windows and defeat batching. A tight burst once the scan
+	// finishes lands every point in one window → one message per device per scan.
+	batch := make([]source.Sample, 0, len(d.points))
 	for _, pt := range d.points {
 		if ctx.Err() != nil {
-			return false
+			return false // shutting down: drop the partial scan
 		}
 		raw, err := p.read(ctx, b, d, pt)
 		if err != nil {
+			p.emitBurst(batch) // publish whatever was read before the failure
 			p.setConn(d, false, "read: "+err.Error())
 			return false
 		}
@@ -310,12 +317,22 @@ func (p *Poller) pollDevice(ctx context.Context, b *bus, d *rtuDevice) bool {
 		d.status.MeasurementsRx++
 		d.status.LastReadAt = time.Now()
 		d.mu.Unlock()
-		if p.h != nil {
-			p.h.OnSample(s)
-		}
+		batch = append(batch, s)
 	}
+	p.emitBurst(batch)
 	p.setConn(d, true, "")
 	return true
+}
+
+// emitBurst hands a scan's buffered samples to the handler back-to-back, so the
+// publisher's coalescing window groups them into one message.
+func (p *Poller) emitBurst(batch []source.Sample) {
+	if p.h == nil {
+		return
+	}
+	for i := range batch {
+		p.h.OnSample(batch[i])
+	}
 }
 
 func (p *Poller) read(ctx context.Context, b *bus, d *rtuDevice, pt modbus.Point) ([]byte, error) {

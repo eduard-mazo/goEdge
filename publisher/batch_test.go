@@ -104,16 +104,19 @@ func TestBatch_SizeCapFlushesEarly(t *testing.T) {
 	}
 }
 
-// TestBatch_DisabledPublishesPerSample: with PublishBatchMs unset (0), behavior
-// is unchanged — one message per signal, no buffering across samples.
+// TestBatch_DisabledPublishesPerSample: with a negative PublishBatchMs (explicit
+// opt-out) behavior is the legacy path — one message per signal, no buffering.
 func TestBatch_DisabledPublishesPerSample(t *testing.T) {
-	cfg := config.AppConfig{Mappings: []config.SignalMapping{
-		devMapping("MOD1", "DEVA", "T1", 10),
-		devMapping("MOD1", "DEVA", "T2", 11),
-	}}
+	cfg := config.AppConfig{
+		MQTT: config.MQTTConfig{PublishBatchMs: -1},
+		Mappings: []config.SignalMapping{
+			devMapping("MOD1", "DEVA", "T1", 10),
+			devMapping("MOD1", "DEVA", "T2", 11),
+		},
+	}
 	p := New(cfg)
 	if p.batchWindow != 0 {
-		t.Fatalf("batching should be off by default")
+		t.Fatalf("negative PublishBatchMs should disable batching")
 	}
 
 	p.handleSample(regSample("MOD1", 10, source.QualityOnline, 1))
@@ -127,6 +130,16 @@ func TestBatch_DisabledPublishesPerSample(t *testing.T) {
 		if len(msg.metrics) != 1 {
 			t.Fatalf("batching off: each message should carry 1 metric, got %+v", msg)
 		}
+	}
+}
+
+// TestBatch_DefaultOnWhenUnset: an unset (0) PublishBatchMs adopts the default
+// coalescing window, so batching is on out of the box.
+func TestBatch_DefaultOnWhenUnset(t *testing.T) {
+	cfg := config.AppConfig{Mappings: []config.SignalMapping{devMapping("MOD1", "DEVA", "T1", 10)}}
+	p := New(cfg)
+	if p.batchWindow != defaultBatchWindow {
+		t.Fatalf("unset PublishBatchMs: want default window %v, got %v", defaultBatchWindow, p.batchWindow)
 	}
 }
 

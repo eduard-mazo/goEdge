@@ -182,7 +182,7 @@ func TestE2E_Batching_GroupsScanIntoOneMessage(t *testing.T) {
 // same scan produces one message per signal (today's legacy behavior).
 func TestE2E_NoBatching_OneMessagePerSignal(t *testing.T) {
 	port := startSlave(t)
-	p := New(e2eConfig(port, 0)) // batching disabled
+	p := New(e2eConfig(port, -1)) // batching disabled (negative = explicit opt-out)
 	if err := p.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

@@ -201,8 +201,9 @@ type MQTTConfig struct {
 	// PublishBatchMs coalesces metrics that arrive within this window into a
 	// single Sparkplug DDATA/NDATA message per device, instead of one message
 	// per signal. A polled Modbus device reads all its points within a few ms of
-	// each other, so they collapse into one message. 0 (default) publishes each
-	// sample immediately (legacy behavior).
+	// each other, and a DNP3 poll returns a burst, so they collapse into one
+	// message. Coalescing is ON by default: 0/unset adopts a 200ms window; a
+	// negative value is the explicit opt-out (legacy one-message-per-sample).
 	PublishBatchMs int `json:"publishBatchMs"`
 }
 
