@@ -11,12 +11,36 @@ export const useGatewayStore = defineStore('gateway', () => {
   const logs = ref<{ level: string; message: string; time: string }[]>([])
   const ws = ref<WebSocket | null>(null)
 
+  // Clock anchor: the gateway's clock at the last status, paired with the browser
+  // clock when it arrived. serverNow() reconstructs the gateway's current time so
+  // freshness ages don't depend on the device and browser clocks agreeing (an
+  // embedded box can be hours off). Falls back to the browser clock until a
+  // status with serverTime is seen.
+  const serverTimeMs = ref(0)
+  const serverRecvAtMs = ref(0)
+
   const isRunning = computed(() => status.value?.running ?? false)
   const mqttConnected = computed(() => status.value?.mqttConnected ?? false)
+
+  function noteServerTime(s: GatewayStatus | null) {
+    const t = s?.serverTime ? Date.parse(s.serverTime) : NaN
+    if (Number.isFinite(t)) {
+      serverTimeMs.value = t
+      serverRecvAtMs.value = Date.now()
+    }
+  }
+
+  /** The gateway clock now, extrapolated from the last status via the browser's
+   *  elapsed time. Pass a reactive `clientNow` so callers re-render on a ticker. */
+  function serverNow(clientNow: number = Date.now()): number {
+    if (!serverTimeMs.value) return clientNow
+    return serverTimeMs.value + (clientNow - serverRecvAtMs.value)
+  }
 
   async function loadStatus() {
     try {
       status.value = await api.status()
+      noteServerTime(status.value)
     } catch {}
   }
 
@@ -42,6 +66,7 @@ export const useGatewayStore = defineStore('gateway', () => {
   async function startGateway() {
     const st = await api.startGateway()
     status.value = st
+    noteServerTime(st)
   }
 
   async function stopGateway() {
@@ -62,6 +87,7 @@ export const useGatewayStore = defineStore('gateway', () => {
           if (logs.value.length > 200) logs.value.pop()
         } else if (evt.type === 'status') {
           status.value = evt.payload
+          noteServerTime(evt.payload)
         } else if (evt.type === 'readings') {
           if (status.value) {
             status.value.lastReadings = { ...status.value.lastReadings, ...evt.payload }
@@ -85,6 +111,7 @@ export const useGatewayStore = defineStore('gateway', () => {
 
   return {
     status, outstations, modbusDevices, serialDevices, mappings, logs, isRunning, mqttConnected,
+    serverNow,
     loadStatus, loadOutstations, loadModbusDevices, loadSerialDevices, loadMappings,
     startGateway, stopGateway,
     connectWS, addLog,

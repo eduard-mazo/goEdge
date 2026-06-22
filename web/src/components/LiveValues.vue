@@ -357,8 +357,10 @@ function ledClass(r: Row) {
   return r.value !== undefined ? 'led--green' : 'led--dim'
 }
 // Reactive wrapper over the shared formatter: re-renders each `now` tick and is
-// hardened against the Go zero-time / epoch sentinels (→ "—").
-const ago = (iso?: string) => agoFmt(iso, now.value)
+// hardened against the Go zero-time / epoch sentinels (→ "—"). Ages are measured
+// against the gateway clock (serverNow), not the browser's, so a device whose
+// clock disagrees with the browser still shows correct, live-ticking labels.
+const ago = (iso?: string) => agoFmt(iso, store.serverNow(now.value))
 
 // SortGlyph — tiny inline indicator. Uses a render function (not a string
 // template) so it works in the runtime-only production build.

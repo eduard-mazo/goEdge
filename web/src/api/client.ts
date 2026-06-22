@@ -273,6 +273,7 @@ export interface GatewayStatus {
   droppedCount?: number
   uptime: string
   lastReadings: Record<string, number>
+  serverTime?: string // gateway clock (UTC RFC3339) at snapshot — anchors freshness ages
 }
 
 // OutstationStatus is the per-source status snapshot (DNP3 outstation or Modbus

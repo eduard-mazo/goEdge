@@ -54,6 +54,11 @@ type Status struct {
 	DroppedCount  int64                    `json:"droppedCount"` // samples shed when the ingest queue was full
 	Uptime        string                   `json:"uptime"`
 	LastReadings  map[string]float64       `json:"lastReadings"`
+	// ServerTime is the gateway clock at snapshot time (UTC RFC3339). The UI
+	// anchors source-freshness ages to this instead of the browser clock, so an
+	// embedded device whose clock disagrees with the browser still shows correct,
+	// live-ticking "last read" labels.
+	ServerTime time.Time `json:"serverTime"`
 }
 
 // Publisher manages the full lifecycle: MQTT connect → NBIRTH/DBIRTH → react to
@@ -504,6 +509,7 @@ func (p *Publisher) Status() Status {
 		DroppedCount: p.droppedCount.Load(),
 		Outstations:  make(map[string]source.Status),
 		LastReadings: make(map[string]float64),
+		ServerTime:   time.Now().UTC(),
 	}
 	s.MQTTConnected = p.mqttUp.Load()
 	if p.node != nil {

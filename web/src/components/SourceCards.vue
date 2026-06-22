@@ -50,7 +50,7 @@
               rx <span class="text-foreground font-medium">{{ o.measurementsRx ?? 0 }}</span>
             </span>
             <span class="text-text-dim" v-if="isRealTime(o.lastReadAt)">
-              últ <span class="text-foreground font-medium">{{ relTime(o.lastReadAt) }}</span>
+              últ <span class="text-foreground font-medium">{{ rel(o.lastReadAt) }}</span>
             </span>
             <span class="text-text-dim" v-else>sin lecturas</span>
           </div>
@@ -64,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useGatewayStore } from '@/stores/gateway'
 import { relTime, isRealTime } from '@/lib/time'
 
@@ -72,6 +72,13 @@ type Proto = 'dnp3' | 'modbus' | 'modbusrtu'
 
 const store = useGatewayStore()
 const protocol = ref<'' | Proto>('')
+
+// Live "últ" labels: tick every second and measure age against the gateway clock
+// (serverNow) so device/browser clock skew can't freeze the freshness display.
+const now = ref(Date.now())
+const ticker = window.setInterval(() => (now.value = Date.now()), 1000)
+onUnmounted(() => window.clearInterval(ticker))
+const rel = (iso?: string) => relTime(iso, store.serverNow(now.value))
 
 // Derive a source's protocol from the configured device lists; default DNP3
 // (covers outstations and any source not yet in the config refs).
