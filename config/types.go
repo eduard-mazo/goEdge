@@ -286,10 +286,10 @@ func (d DNP3Outstation) Addr() string {
 }
 
 // DNP3OutstationServer configures the gateway's own DNP3 outstation: a TCP
-// server that serves the aggregated field data northbound to a SCADA master
-// (e.g. Survalent). The gateway acts as an outstation here — the reverse of the
-// DNP3Outstation entries above, which are remote outstations the gateway polls
-// as a master. Monitoring-only: controls from the master are rejected.
+// server that serves the aggregated field data northbound to a SCADA master.
+// The gateway acts as an outstation here — the reverse of the DNP3Outstation
+// entries above, which are remote outstations the gateway polls as a master.
+// Monitoring-only: controls from the master are rejected.
 //
 // Single instance for now (one bind endpoint + link-address pair). The point
 // set served is taken from the SignalMappings flagged ServeDNP3 (see Phase 4).
@@ -396,7 +396,7 @@ type SignalMapping struct {
 
 	// DNP3 outstation-server output: when ServeDNP3 is set, this mapped point is
 	// also re-exposed on the gateway's own outstation (DNP3Server) so a SCADA
-	// master (e.g. Survalent) can poll it. The engineering-scaled value is served
+	// master can poll it. The engineering-scaled value is served
 	// as a point of type OutType at index OutIndex. OutClass/OutDeadband are
 	// reserved for per-point event tuning (not yet honored — every served point
 	// is event class 1 with default variations).

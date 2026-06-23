@@ -2,10 +2,11 @@
 
 > Industrial protocol gateway: polls **Modbus/TCP** and **Modbus RTU (RS-485)**
 > devices and acts as a **DNP3** master, normalizes their measurements, and
-> republishes them as **MQTT Sparkplug B** metrics. Ships with an embedded Vue web UI for
-> configuration and live monitoring. Primary deployment target is the Advantech
-> **ICR-3232** industrial router (linux/arm/v7); also builds for linux/amd64 and
-> windows/amd64.
+> republishes them as **MQTT Sparkplug B** metrics — and can re-serve the same
+> aggregated data northbound to a SCADA master as a **DNP3 outstation**. Ships
+> with an embedded Vue web UI for configuration and live monitoring. Primary
+> deployment target is the Advantech **ICR-3232** industrial router
+> (linux/arm/v7); also builds for linux/amd64 and windows/amd64.
 
 Module: `goMqttDnp3` · Go 1.24 · ~6.3k LOC Go + Vue 3 SPA.
 
@@ -45,6 +46,15 @@ bounded `ingest` channel; a single drain goroutine maps, filters, and publishes
 them. A slow or unreachable broker never back-pressures the protocol stack —
 samples are buffered offline or shed (counted in `Status.DroppedCount`).
 
+**Northbound DNP3 outstation (optional).** When `dnp3Server.enabled`, the
+publisher feeds every `ServeDNP3` mapping into an in-process DNP3 **outstation
+server** (the same opendnp3 stack, server side) — a second sink alongside MQTT.
+A SCADA master polls it over DNP3/IP and reads the gateway's engineering-scaled
+values with quality. The feed runs in `handleSample` independent of the MQTT
+publish gating, so a master's integrity poll always sees the latest value;
+opendnp3 does its own change/event detection. Monitoring-only — controls from the
+master are rejected.
+
 ---
 
 ## 2. Package map
@@ -56,13 +66,13 @@ samples are buffered offline or shed (counted in `Status.DroppedCount`).
 | `config` | `AppConfig` schema, defaults, and `Store` (thread-safe, atomic JSON persistence). | Stable |
 | `source` | Protocol-agnostic boundary: `Source`, `Handler`, `Sample`, `Quality`, `Status`, `PointType`. | Stable |
 | `publisher` | Orchestrates sources → mapping → deadband → Sparkplug/MQTT; offline buffer; live status push. | Stable |
-| `dnp3` | DNP3 master `Source`. Stub (default) or `dnp3_ffi` cgo binding to opendnp3. | Stub stable; FFI requires vendored lib |
+| `dnp3` | DNP3 master `Source` **and** northbound outstation server (`Outstation`). Stub (default) or `dnp3_ffi` cgo binding to opendnp3; one shared, refcounted `DNP3Manager` serves both roles. | Stub stable; FFI requires vendored lib |
 | `modbus` | Modbus/TCP poller `Source`: per-device connection, typed register decoding, byte-order handling. Exports the transport-agnostic decode helpers (`Point`, `ResolvePoint`, `Read`, `DecodeSample`) reused by `modbusrtu`. | Stable |
 | `modbusrtu` | Modbus RTU (serial/RS-485) `Source`. Groups slaves by serial port into a half-duplex **bus** (one goroutine per port, serialized transactions); per-slave cadence/timeout/retry; optional `TIOCSRS485` direction control. Reuses `modbus`'s decode. | Stable |
 | `mapping` | `Apply` — converts a `Sample` to a Sparkplug `Metric` (scale/offset, quality properties); deadband. Modbus/TCP and RTU share one formatting path. | Stable |
 | `sparkplug` | Hand-rolled Sparkplug B v1.0 protobuf encoder, NBIRTH/NDATA/NDEATH, alias registry, topic builder. | Stable |
 | `sysmon` | Host telemetry collector (gopsutil) + ICR-323x vendor sensors (`icr` build tag). | Stable |
-| `cmd/dnp3smoke`, `cmd/modbussmoke`, `cmd/rtusmoke` | Manual smoke-test entry points. `rtusmoke` allocates a PTY pair and runs an in-process RTU slave — no hardware needed (Linux). | Dev tooling |
+| `cmd/dnp3smoke`, `cmd/ostnsmoke`, `cmd/modbussmoke`, `cmd/rtusmoke` | Manual smoke-test entry points. `ostnsmoke` runs the gateway's outstation server + its own master in one loopback process and asserts served-value readback. `rtusmoke` allocates a PTY pair and runs an in-process RTU slave — no hardware needed (Linux). | Dev tooling |
 | `scripts/sim` | Field-device simulators: DNP3 outstation (C++/opendnp3) and Modbus slave (Go). | Dev tooling |
 
 ### Source abstraction
@@ -80,7 +90,7 @@ semantics as the common model; Modbus maps a good read to `QualityOnline`.
 |---|---|
 | *(none)* | Stub DNP3 master (no C deps). UI not embedded — `/` serves nothing. |
 | `embed` | Embeds `web/dist` (built SPA) into the binary via `embed_prod.go`. |
-| `dnp3_ffi` | Links the real opendnp3 master via cgo (`dnp3/opendnp3_c.cpp`). Requires `make opendnp3-vendor`. |
+| `dnp3_ffi` | Links the real opendnp3 master **and outstation server** via cgo (`dnp3/opendnp3_c.cpp`). Requires `make opendnp3-vendor`. |
 | `icr` | Enables the ICR-323x vendor sensor collector (`sysmon/vendor_icr.go`); reads `status -v sys`. |
 | `netgo` | Pure-Go DNS resolver (used in the fully-static ICR cross-build). |
 
@@ -129,14 +139,18 @@ rename) has these sections:
 - **`mappings`** — `SignalMapping` per point. Carries a `protocol` discriminator
   (`dnp3`/`modbus`/`modbusrtu`), source reference (`sourceId`, legacy
   `outstationId`), point
-  identity, engineering transform (scale/offset/unit), and publish controls
-  (deadband, publish-on-poll).
+  identity, engineering transform (scale/offset/unit), publish controls
+  (deadband, publish-on-poll), and optional DNP3-outstation output
+  (`serveDnp3`, `outType`, `outIndex`).
+- **`dnp3Server`** — the gateway's own northbound DNP3 outstation: enable flag,
+  bind host/port, link addresses (local/master), unsolicited toggle, and
+  event-buffer depth. The served point set is the `serveDnp3` mappings.
 - **`system`** — host telemetry: enable flag, interval, metric prefix, mounts,
   interfaces, per-group `metrics` toggles, and `disabledMetrics` opt-outs.
 
 Defaults live in `config.DefaultAppConfig()`; validation lives in `api/handlers.go`
 (`validateMQTT`, `validateOutstation`, `validateModbusDevice`,
-`validateSerialDevice`, `validateMapping`, `validateSystem`).
+`validateSerialDevice`, `validateMapping`, `validateSystem`, `validateDNP3Server`).
 
 ---
 
@@ -153,6 +167,7 @@ All REST responses use the envelope `{ "success": bool, "message"?: string,
 | GET/PUT | `/api/config/mqtt` | MQTT section. |
 | GET/PUT | `/api/config/sparkplug` | Sparkplug section. |
 | GET/PUT | `/api/config/system` | Host-telemetry section (hot-applied when running). |
+| GET/PUT | `/api/config/dnp3Server` | DNP3 outstation-server section (effective on next gateway start). |
 | GET | `/api/system/telemetry` | Flat host-telemetry snapshot (reuses publisher's sample when running; samples on demand otherwise — works with the broker down). |
 | GET/POST | `/api/outstations` | List / upsert DNP3 outstations. |
 | PUT/DELETE | `/api/outstations/{id}` | Update / delete (cascades to mappings). |
@@ -240,6 +255,9 @@ the current trusted-LAN model.
   parsing). Run with `-race` for the concurrency-sensitive paths.
 - `cmd/dnp3smoke`, `cmd/modbussmoke` and `scripts/sim/*` provide end-to-end smoke
   testing against the bundled simulators (`make sim-dnp3`, `make sim-modbus`).
+- `make smoke-dnp3-ostn` runs the outstation-server loopback test
+  (`cmd/ostnsmoke`): the gateway's outstation plus its own master in one process,
+  asserting served-value readback (incl. fractional analogs and bad quality).
 - The DNP3 FFI path requires `make opendnp3-vendor` and a `dnp3_ffi` build.
 - **Full edge → gateway → TimescaleDB soak:** the end-to-end runbook and a
   one-command harness live in the **goGateway** repo — `docs/e2e-test-guide.md`

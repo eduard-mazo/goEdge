@@ -8,7 +8,7 @@ import (
 )
 
 // Outstation is the DNP3 outstation server: the gateway serves aggregated field
-// data northbound to a SCADA master (e.g. Survalent) over DNP3.
+// data northbound to a SCADA master over DNP3.
 //
 // Unlike Master, an Outstation is a sink, not a source.Source — the publisher
 // pushes values into it via Update as samples flow in from the field, rather

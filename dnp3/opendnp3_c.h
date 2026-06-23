@@ -133,7 +133,7 @@ void odc_master_destroy(odc_master* mst);
 
 /* ===========================================================================
  * Outstation server (gateway acts as a DNP3 outstation, serving aggregated
- * field data northbound to a SCADA master like Survalent).
+ * field data northbound to a SCADA master).
  *
  * Hangs off the SAME odc_manager as the masters (one asio thread pool, one log
  * sink for both roles). Monitoring-only for now: the command handler rejects
