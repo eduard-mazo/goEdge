@@ -14,8 +14,8 @@
 //   - The shim invokes callbacks from opendnp3 pool threads; we hand the
 //     resulting dnp3.Measurement / OutstationStatus to the Handler directly.
 //
-// Build:  go build -tags dnp3_ffi   (with CGO_CXXFLAGS/CGO_LDFLAGS pointing at
-//         the vendored opendnp3 — see the Makefile ffi targets).
+// Build: go build -tags dnp3_ffi with CGO_CXXFLAGS/CGO_LDFLAGS pointing at the
+// vendored opendnp3 — see the Makefile ffi targets.
 package dnp3
 
 /*
@@ -86,8 +86,9 @@ import (
 type ffiMaster struct {
 	h source.Handler
 
+	// manager is this role's reference to the process-wide shared opendnp3
+	// manager (see acquireManager); nil until Start, nil again after Stop.
 	manager *C.odc_manager
-	mgrOnce sync.Once
 
 	mu      sync.Mutex
 	assocs  map[string]*assocCtx // outstation ID → context
@@ -118,13 +119,13 @@ type assocCtx struct {
 type staticVariation struct{ group, variation uint8 }
 
 var staticVariations = []staticVariation{
-	{1, 2},   // binary input with flags
-	{3, 2},   // double-bit binary with flags
-	{10, 2},  // binary output status with flags
-	{20, 1},  // counter 32-bit with flag
-	{21, 1},  // frozen counter 32-bit with flag
-	{30, 1},  // analog input 32-bit with flag
-	{40, 1},  // analog output status 32-bit with flag
+	{1, 2},  // binary input with flags
+	{3, 2},  // double-bit binary with flags
+	{10, 2}, // binary output status with flags
+	{20, 1}, // counter 32-bit with flag
+	{21, 1}, // frozen counter 32-bit with flag
+	{30, 1}, // analog input 32-bit with flag
+	{40, 1}, // analog output status 32-bit with flag
 }
 
 func newMaster(h source.Handler) Master {
@@ -143,21 +144,61 @@ const (
 	odcLogVerbose int32 = -1        // all bits
 )
 
-func (m *ffiMaster) ensureManager() error {
-	var firstErr error
-	m.mgrOnce.Do(func() {
+// Process-wide opendnp3 manager (one asio thread pool + log sink) shared by both
+// the master (AddTCPClient) and outstation (AddTCPServer) roles. Reference
+// counted so the manager is created on the first role to start and torn down
+// only when the last role stops. opendnp3 supports many channels per manager, so
+// one manager serves any number of masters and the single outstation.
+var (
+	sharedMgrMu   sync.Mutex
+	sharedMgr     *C.odc_manager
+	sharedMgrRefs int
+)
+
+// acquireManager returns the shared manager, creating it on first use. Every
+// successful call must be paired with exactly one releaseManager.
+func acquireManager() (*C.odc_manager, error) {
+	sharedMgrMu.Lock()
+	defer sharedMgrMu.Unlock()
+	if sharedMgr == nil {
 		cbs := C.odc_build_callbacks()
 		mask := odcLogQuiet
 		if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 			mask = odcLogVerbose
 		}
 		// concurrency 0 → shim auto-sizes; nil log ctx (lib logs route to slog).
-		m.manager = C.odc_manager_create(0, cbs, nil, C.int32_t(mask))
-		if m.manager == nil {
-			firstErr = errors.New("opendnp3: odc_manager_create failed")
+		mgr := C.odc_manager_create(0, cbs, nil, C.int32_t(mask))
+		if mgr == nil {
+			return nil, errors.New("opendnp3: odc_manager_create failed")
 		}
-	})
-	return firstErr
+		sharedMgr = mgr
+	}
+	sharedMgrRefs++
+	return sharedMgr, nil
+}
+
+// releaseManager drops one reference to the shared manager, destroying it (and
+// its thread pool) when the last reference is released.
+func releaseManager() {
+	sharedMgrMu.Lock()
+	defer sharedMgrMu.Unlock()
+	if sharedMgrRefs == 0 {
+		return
+	}
+	sharedMgrRefs--
+	if sharedMgrRefs == 0 && sharedMgr != nil {
+		C.odc_manager_destroy(sharedMgr)
+		sharedMgr = nil
+	}
+}
+
+func (m *ffiMaster) ensureManager() error {
+	mgr, err := acquireManager()
+	if err != nil {
+		return err
+	}
+	m.manager = mgr
+	return nil
 }
 
 func (m *ffiMaster) AddOutstation(o config.DNP3Outstation) error {
@@ -335,10 +376,13 @@ func (m *ffiMaster) Stop() {
 		}
 	}
 
-	// Tear down the manager (stops the thread pool) before deleting cgo.Handles,
-	// so any last callback fired during shutdown still resolves its handle.
+	// Release our reference to the shared manager. It is torn down only when the
+	// last role (master or outstation) releases it, so if the outstation is still
+	// up the manager stays alive — harmless, since our own masters are already
+	// destroyed above. Released before deleting cgo.Handles so any last callback
+	// during a real teardown still resolves its handle.
 	if m.manager != nil {
-		C.odc_manager_destroy(m.manager)
+		releaseManager()
 		m.manager = nil
 	}
 

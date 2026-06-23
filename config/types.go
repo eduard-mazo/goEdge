@@ -9,13 +9,14 @@ import "strconv"
 // SourceID; the publisher runs one source.Source per protocol and routes
 // samples to mappings by source ID.
 type AppConfig struct {
-	MQTT          MQTTConfig       `json:"mqtt"`
-	Sparkplug     SparkplugConfig  `json:"sparkplug"`
-	Outstations   []DNP3Outstation `json:"outstations"`
-	ModbusDevices []ModbusDevice   `json:"modbusDevices"`
-	SerialDevices []SerialDevice   `json:"serialDevices"`
-	Mappings      []SignalMapping  `json:"mappings"`
-	System        SystemConfig     `json:"system"`
+	MQTT          MQTTConfig           `json:"mqtt"`
+	Sparkplug     SparkplugConfig      `json:"sparkplug"`
+	Outstations   []DNP3Outstation     `json:"outstations"`
+	ModbusDevices []ModbusDevice       `json:"modbusDevices"`
+	SerialDevices []SerialDevice       `json:"serialDevices"`
+	Mappings      []SignalMapping      `json:"mappings"`
+	System        SystemConfig         `json:"system"`
+	DNP3Server    DNP3OutstationServer `json:"dnp3Server"` // northbound DNP3 outstation
 }
 
 // SystemConfig controls host-telemetry collection (CPU, memory, disk, network,
@@ -284,6 +285,60 @@ func (d DNP3Outstation) Addr() string {
 	return d.Host + ":" + strconv.Itoa(port)
 }
 
+// DNP3OutstationServer configures the gateway's own DNP3 outstation: a TCP
+// server that serves the aggregated field data northbound to a SCADA master
+// (e.g. Survalent). The gateway acts as an outstation here — the reverse of the
+// DNP3Outstation entries above, which are remote outstations the gateway polls
+// as a master. Monitoring-only: controls from the master are rejected.
+//
+// Single instance for now (one bind endpoint + link-address pair). The point
+// set served is taken from the SignalMappings flagged ServeDNP3 (see Phase 4).
+type DNP3OutstationServer struct {
+	Enabled bool   `json:"enabled"`
+	ID      string `json:"id"`    // status key; default "dnp3-server"
+	Label   string `json:"label"` // human-readable name
+
+	BindHost string `json:"bindHost"` // listen address; default 0.0.0.0
+	Port     int    `json:"port"`     // DNP3/IP listen port; default 20000
+
+	LocalAddress  uint16 `json:"localAddress"`  // this outstation's link addr (typical 1024+)
+	MasterAddress uint16 `json:"masterAddress"` // the SCADA master's link addr (typical 1)
+
+	AllowUnsolicited bool `json:"allowUnsolicited"` // permit unsolicited responses
+	EventBufferSize  int  `json:"eventBufferSize"`  // per-type event buffer depth; default 100
+}
+
+// ServerID returns the status key for the outstation server, defaulting to
+// "dnp3-server" when unset.
+func (s DNP3OutstationServer) ServerID() string {
+	if s.ID != "" {
+		return s.ID
+	}
+	return "dnp3-server"
+}
+
+// Bind returns the listen address, defaulting the host to 0.0.0.0.
+func (s DNP3OutstationServer) Bind() string {
+	host := s.BindHost
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	return host
+}
+
+// ServerPort returns the listen port, defaulting to the DNP3/IP port 20000.
+func (s DNP3OutstationServer) ServerPort() int {
+	if s.Port == 0 {
+		return 20000
+	}
+	return s.Port
+}
+
+// Addr returns "host:port" for the outstation server.
+func (s DNP3OutstationServer) Addr() string {
+	return s.Bind() + ":" + strconv.Itoa(s.ServerPort())
+}
+
 // SignalMapping maps a DNP3 point to a Sparkplug B metric.
 // DNP3 points are addressed by (Group, Variation, Index).
 // The library delivers typed measurements; no byte-order/scaling decoding is needed.
@@ -339,6 +394,18 @@ type SignalMapping struct {
 	Deadband      float64 `json:"deadband"`      // min change to publish (post-scale); 0 = always
 	PublishOnPoll bool    `json:"publishOnPoll"` // also publish static/poll reads (not only events)
 
+	// DNP3 outstation-server output: when ServeDNP3 is set, this mapped point is
+	// also re-exposed on the gateway's own outstation (DNP3Server) so a SCADA
+	// master (e.g. Survalent) can poll it. The engineering-scaled value is served
+	// as a point of type OutType at index OutIndex. OutClass/OutDeadband are
+	// reserved for per-point event tuning (not yet honored — every served point
+	// is event class 1 with default variations).
+	ServeDNP3   bool    `json:"serveDnp3"`
+	OutType     string  `json:"outType"`     // binary|double_bit_binary|binary_output_status|counter|analog|analog_output_status|octet_string
+	OutIndex    uint16  `json:"outIndex"`    // index within OutType's space
+	OutClass    uint8   `json:"outClass"`    // reserved: DNP3 event class 1|2|3
+	OutDeadband float64 `json:"outDeadband"` // reserved: analog event deadband
+
 	Enabled bool `json:"enabled"`
 }
 
@@ -386,6 +453,15 @@ func DefaultAppConfig() AppConfig {
 		ModbusDevices: []ModbusDevice{},
 		SerialDevices: []SerialDevice{},
 		Mappings:      []SignalMapping{},
+		DNP3Server: DNP3OutstationServer{
+			Enabled:         false,
+			ID:              "dnp3-server",
+			BindHost:        "0.0.0.0",
+			Port:            20000,
+			LocalAddress:    1024,
+			MasterAddress:   1,
+			EventBufferSize: 100,
+		},
 		System: SystemConfig{
 			Enabled:      false,
 			IntervalMs:   5000,

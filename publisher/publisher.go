@@ -74,6 +74,11 @@ type Publisher struct {
 	modbusRTU *modbusrtu.Poller
 	sources   []source.Source
 
+	// outstation is the northbound DNP3 outstation server (nil when disabled): a
+	// sink that re-exposes ServeDNP3 mappings so a SCADA master can poll the
+	// gateway's aggregated data. Fed from handleSample, not a source.Source.
+	outstation dnp3.Outstation
+
 	node   *sparkplug.Node
 	client mqtt.Client
 
@@ -194,6 +199,9 @@ func New(cfg config.AppConfig) *Publisher {
 	p.modbus = modbus.New(p)
 	p.modbusRTU = modbusrtu.New(p)
 	p.sources = []source.Source{p.master, p.modbus, p.modbusRTU}
+	if cfg.DNP3Server.Enabled {
+		p.outstation = dnp3.NewOutstation(cfg.DNP3Server, outstationSizes(cfg.Mappings), p)
+	}
 	if cfg.System.Enabled {
 		p.sysCollector = sysmon.New(cfg.System)
 	}
@@ -220,6 +228,98 @@ func normalizeMapping(sig config.SignalMapping) config.SignalMapping {
 	sig.Index = sig.Address
 	sig.PublishOnPoll = true
 	return sig
+}
+
+// outstationSizes computes the DNP3 outstation database dimensions from the
+// ServeDNP3 mappings: the highest served index per OutType, plus one. An Update
+// to an index beyond these bounds is dropped by the shim, so the database must
+// be sized to cover every served point. Frozen-counter outputs are served as
+// plain counters (opendnp3 has no direct frozen-counter setter), so they size
+// the counter space.
+func outstationSizes(mappings []config.SignalMapping) dnp3.OutstationDBSizes {
+	var s dnp3.OutstationDBSizes
+	bump := func(p *uint16, idx uint16) {
+		n := min(uint32(idx)+1, 65535)
+		if uint16(n) > *p {
+			*p = uint16(n)
+		}
+	}
+	for _, sig := range mappings {
+		if !sig.Enabled || !sig.ServeDNP3 {
+			continue
+		}
+		switch source.PointType(sig.OutType) {
+		case source.PointBinary:
+			bump(&s.Binary, sig.OutIndex)
+		case source.PointDoubleBitBinary:
+			bump(&s.DoubleBit, sig.OutIndex)
+		case source.PointBinaryOutputStatus:
+			bump(&s.BinaryOutputStatus, sig.OutIndex)
+		case source.PointCounter, source.PointFrozenCounter:
+			bump(&s.Counter, sig.OutIndex)
+		case source.PointAnalog:
+			bump(&s.Analog, sig.OutIndex)
+		case source.PointAnalogOutputStatus:
+			bump(&s.AnalogOutputStatus, sig.OutIndex)
+		case source.PointOctetString:
+			bump(&s.OctetString, sig.OutIndex)
+		}
+	}
+	return s
+}
+
+// serveOutstation pushes one mapped point onto the DNP3 outstation database so a
+// SCADA master sees the gateway's aggregated value. It serves the
+// engineering-scaled value (result.Value, matching the MQTT side) at the
+// configured (OutType, OutIndex), carrying the source quality flags through so a
+// bad/comm-lost reading is served bad. Called for every matching sample
+// (independent of the MQTT publish gating) so integrity polls stay fresh;
+// opendnp3 does its own change/event detection.
+func (p *Publisher) serveOutstation(sig config.SignalMapping, m source.Sample, result mapping.Result) {
+	out := source.Sample{
+		PointType: source.PointType(sig.OutType),
+		Index:     sig.OutIndex,
+		Time:      m.Time,
+		Quality:   m.Quality,
+	}
+	switch out.PointType {
+	case source.PointBinary, source.PointBinaryOutputStatus:
+		out.BoolValue = result.Value != 0
+	case source.PointDoubleBitBinary:
+		out.DBBValue = source.DoubleBitState(clampDBB(result.Value))
+	case source.PointCounter, source.PointFrozenCounter:
+		out.UintValue = toUint32(result.Value)
+	case source.PointAnalog, source.PointAnalogOutputStatus:
+		out.FloatValue = result.Value
+	case source.PointOctetString:
+		out.BytesValue = m.BytesValue
+	default:
+		return // unknown OutType: skip rather than serve a wrong-typed point
+	}
+	p.outstation.Update(out)
+}
+
+// toUint32 clamps a (possibly scaled/negative) engineering value to the uint32
+// range a DNP3 counter carries.
+func toUint32(v float64) uint32 {
+	if math.IsNaN(v) || v <= 0 {
+		return 0
+	}
+	if v >= math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(v)
+}
+
+// clampDBB clamps a numeric value to the DNP3 double-bit state range [0,3].
+func clampDBB(v float64) uint8 {
+	if math.IsNaN(v) || v < 0 {
+		return 0
+	}
+	if v > 3 {
+		return 3
+	}
+	return uint8(v)
 }
 
 // Start connects MQTT, sends NBIRTH/DBIRTHs, and starts the DNP3 master.
@@ -341,6 +441,18 @@ func (p *Publisher) Start(ctx context.Context) error {
 	p.wg.Add(1)
 	go p.ingestLoop()
 
+	// Bring up the DNP3 outstation server (if enabled) before the field sources,
+	// so its served points exist before the first sample is pushed to them.
+	if p.outstation != nil {
+		if err := p.outstation.Start(pCtx); err != nil {
+			cancel()
+			close(p.ingest)
+			p.wg.Wait()
+			p.running.Store(false)
+			return fmt.Errorf("outstation start: %w", err)
+		}
+	}
+
 	for _, s := range p.sources {
 		if err := s.Start(pCtx); err != nil {
 			// Tear down everything already brought up so a failed start doesn't
@@ -348,6 +460,9 @@ func (p *Publisher) Start(ctx context.Context) error {
 			// that never started.
 			for _, other := range p.sources {
 				other.Stop()
+			}
+			if p.outstation != nil {
+				p.outstation.Stop()
 			}
 			cancel()
 			close(p.ingest)
@@ -366,8 +481,12 @@ func (p *Publisher) Start(ctx context.Context) error {
 		p.logInfo(fmt.Sprintf("System monitoring enabled (every %s)", p.currentInterval()))
 	}
 
-	p.logInfo(fmt.Sprintf("Publisher started: %d outstations, %d modbus/tcp devices, %d modbus/rtu devices, %d mappings",
-		len(cfg.Outstations), len(cfg.ModbusDevices), len(cfg.SerialDevices), len(cfg.Mappings)))
+	dnp3Server := "off"
+	if p.outstation != nil {
+		dnp3Server = "on @ " + cfg.DNP3Server.Addr()
+	}
+	p.logInfo(fmt.Sprintf("Publisher started: %d outstations, %d modbus/tcp devices, %d modbus/rtu devices, %d mappings, dnp3 server %s",
+		len(cfg.Outstations), len(cfg.ModbusDevices), len(cfg.SerialDevices), len(cfg.Mappings), dnp3Server))
 	return nil
 }
 
@@ -500,6 +619,11 @@ func (p *Publisher) Stop() {
 	}
 	close(p.ingest)
 	p.wg.Wait()
+	// Stop the outstation only after the ingest queue has fully drained, so no
+	// in-flight serveOutstation → Update can race the teardown.
+	if p.outstation != nil {
+		p.outstation.Stop()
+	}
 	if p.client != nil && p.mqttUp.Load() {
 		if err := p.node.PublishNDeath(p.client); err != nil {
 			p.logWarn("NDEATH failed: " + err.Error())
@@ -537,6 +661,12 @@ func (p *Publisher) Status() Status {
 		for _, st := range src.Status() {
 			s.Outstations[st.ID] = st
 		}
+	}
+	// The northbound DNP3 outstation server reports under its own ID; Connected
+	// here means a SCADA master is currently connected.
+	if p.outstation != nil {
+		st := p.outstation.Status()
+		s.Outstations[st.ID] = st
 	}
 	// Overlay any extra fields the publisher cached via OnStatusChange
 	// (e.g. LastError that the master doesn't re-emit on every measurement).
@@ -616,15 +746,28 @@ func (p *Publisher) handleSample(m source.Sample) {
 		if sig.PointType != string(m.PointType) || sig.Index != m.Index {
 			continue
 		}
-		// By default publish only change events; static/poll responses (integrity
-		// and static polls) publish only when the mapping opts in via PublishOnPoll.
-		if !m.IsEvent && !sig.PublishOnPoll {
+		serve := sig.ServeDNP3 && p.outstation != nil
+		// By default only change events flow to MQTT; static/poll responses publish
+		// only when the mapping opts in via PublishOnPoll.
+		mqttGated := !m.IsEvent && !sig.PublishOnPoll
+		// A non-served, MQTT-gated sample has nothing to do — skip before mapping
+		// so the common MQTT-only path keeps its early-out.
+		if !serve && mqttGated {
 			continue
 		}
 		result, err := mapping.Apply(sig, m)
 		if err != nil {
 			p.errorCount.Add(1)
 			slog.Warn("mapping error", "metric", sig.MetricName, "err", err)
+			continue
+		}
+		// Feed the DNP3 outstation first, independent of the MQTT gating below, so
+		// a SCADA master's integrity polls always see the latest value (opendnp3
+		// does its own change/event detection on the served side).
+		if serve {
+			p.serveOutstation(sig, m, result)
+		}
+		if mqttGated {
 			continue
 		}
 		// Carry the computed quality onto the wire: a not-good measurement

@@ -58,6 +58,7 @@ SIM_DNP3_WIN_BIN := outstation_sim.exe
         check-dnp3-windows check-mingw-toolchain \
         opendnp3-vendor opendnp3-vendor-arm opendnp3-vendor-windows \
         sim-dnp3 sim-dnp3-build sim-dnp3-windows sim-modbus dev-cert \
+        smoke-dnp3 smoke-dnp3-ostn \
         deploy-icr deploy-icr-ffi service-icr verify-arm \
         test clean
 
@@ -351,6 +352,16 @@ sim-dnp3-windows: check-mingw-toolchain check-dnp3-windows ## Cross-build the DN
 # Run the Modbus/TCP slave sim (pure Go; no opendnp3 needed).
 sim-modbus: ## Run the Modbus/TCP slave simulator (pure Go)
 	go run ./scripts/sim/modbusslave $(SIM_MODBUS_PORT)
+
+# Runtime smoke test of the DNP3 MASTER binding against the C++ outstation sim.
+smoke-dnp3: ## Smoke-test the DNP3 master (sim outstation + Go harness)
+	bash scripts/dnp3-smoke.sh $(SIM_DNP3_PORT)
+
+# Runtime smoke test of the DNP3 OUTSTATION binding: the gateway's outstation
+# server + its own master in one loopback process, asserting served-value
+# readback (incl. fractional analogs and bad quality). No external sim needed.
+smoke-dnp3-ostn: ## Smoke-test the DNP3 outstation server (loopback master)
+	bash scripts/dnp3-ostn-smoke.sh $(SIM_DNP3_PORT)
 
 # ── TLS helper ───────────────────────────────────────────────────────
 #

@@ -131,6 +131,86 @@ int odc_master_disable(odc_master* mst);
 /* Shut down and free a single master and its channel. */
 void odc_master_destroy(odc_master* mst);
 
+/* ===========================================================================
+ * Outstation server (gateway acts as a DNP3 outstation, serving aggregated
+ * field data northbound to a SCADA master like Survalent).
+ *
+ * Hangs off the SAME odc_manager as the masters (one asio thread pool, one log
+ * sink for both roles). Monitoring-only for now: the command handler rejects
+ * every control with NOT_SUPPORTED; SCADA→field passthrough comes later.
+ * ===========================================================================*/
+
+typedef struct odc_outstation odc_outstation;
+
+/*
+ * Per-type point counts → DatabaseConfig sizing. The outstation database is
+ * built with contiguous indices [0, count) for each type, default class 1 and
+ * default static/event variations. Updates to an out-of-range index are
+ * dropped, so size each type to cover the highest index the gateway serves.
+ */
+typedef struct {
+    uint16_t binary;
+    uint16_t double_bit;
+    uint16_t analog;
+    uint16_t counter;
+    uint16_t frozen_counter; /* sized for completeness; no direct setter — opendnp3
+                                derives frozen counters by freezing a counter, so
+                                map a field frozen-counter to a plain counter point */
+    uint16_t binary_output_status;
+    uint16_t analog_output_status;
+    uint16_t octet_string;
+} odc_db_sizes;
+
+/*
+ * Outstation callback vtable. Currently just the channel-state callback, which
+ * for a TCP server reflects whether a master (SCADA) is connected. `ctx` is the
+ * opaque pointer passed to odc_manager_add_outstation. May be NULL.
+ */
+typedef struct {
+    void (*on_channel_state)(void* ctx, int state);
+} odc_outstation_callbacks;
+
+typedef struct {
+    const char* bind_host;       /* listen address; NULL → "0.0.0.0" */
+    uint16_t    port;            /* DNP3/IP listen port (default 20000) */
+    uint16_t    local_address;   /* this outstation's link-layer address */
+    uint16_t    master_address;  /* the SCADA master's link-layer address */
+
+    int         allow_unsolicited;   /* permit unsolicited responses */
+    uint16_t    event_buffer_size;   /* per-type event buffer depth; 0 → 100 */
+
+    odc_db_sizes sizes;
+} odc_outstation_config;
+
+/*
+ * Add a TCP-server channel to the manager and bind one outstation to it.
+ * `ctx` is passed back on the channel-state callback. Returns NULL on failure.
+ */
+odc_outstation* odc_manager_add_outstation(odc_manager* mgr, const char* id,
+                                           odc_outstation_config cfg,
+                                           odc_outstation_callbacks cbs, void* ctx);
+
+/*
+ * Push one measurement into the outstation database (UpdateBuilder + Apply).
+ * Apply posts to the outstation's strand, so these are safe to call from any
+ * thread. flags = DNP3 quality bitfield (IEEE 1815 §A.4); ts_ms = unix epoch
+ * milliseconds (0 → no timestamp / INVALID quality). Return 0 on success.
+ */
+int odc_outstation_update_binary(odc_outstation* os, uint16_t index, int value, uint8_t flags, uint64_t ts_ms);
+int odc_outstation_update_double_bit(odc_outstation* os, uint16_t index, int state, uint8_t flags, uint64_t ts_ms);
+int odc_outstation_update_analog(odc_outstation* os, uint16_t index, double value, uint8_t flags, uint64_t ts_ms);
+int odc_outstation_update_counter(odc_outstation* os, uint16_t index, uint32_t value, uint8_t flags, uint64_t ts_ms);
+int odc_outstation_update_binary_output_status(odc_outstation* os, uint16_t index, int value, uint8_t flags, uint64_t ts_ms);
+int odc_outstation_update_analog_output_status(odc_outstation* os, uint16_t index, double value, uint8_t flags, uint64_t ts_ms);
+int odc_outstation_update_octet_string(odc_outstation* os, uint16_t index, const uint8_t* data, size_t len);
+
+/* Synchronously enable/disable the outstation (start/stop serving). 0 on success. */
+int  odc_outstation_enable(odc_outstation* os);
+int  odc_outstation_disable(odc_outstation* os);
+
+/* Shut down and free a single outstation and its server channel. */
+void odc_outstation_destroy(odc_outstation* os);
+
 #ifdef __cplusplus
 }
 #endif
