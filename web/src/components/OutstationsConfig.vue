@@ -76,7 +76,7 @@
           </div>
           <form @submit.prevent="saveOutstation" class="p-5 space-y-4">
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="ID (identificador único)">
                 <input v-model="form.id" class="forge-input" :disabled="!!editId" required placeholder="rtu-01" />
               </Field>
@@ -85,7 +85,7 @@
               </Field>
             </div>
 
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Field label="Host" class="col-span-2">
                 <input v-model="form.host" class="forge-input" placeholder="192.168.1.100" required />
               </Field>
@@ -96,7 +96,7 @@
 
             <fieldset class="space-y-3">
               <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Capa de enlace</legend>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Dir. maestro" hint="Dirección local (típico: 1)">
                   <input v-model.number="form.masterAddress" class="forge-input" type="number" min="1" max="65519" required />
                 </Field>
@@ -108,7 +108,7 @@
 
             <fieldset class="space-y-3">
               <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Capa de aplicación</legend>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Timeout respuesta (ms)" hint="por defecto 5000">
                   <input v-model.number="form.responseTimeoutMs" class="forge-input" type="number" placeholder="5000" />
                 </Field>
@@ -122,7 +122,7 @@
               <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">
                 Sondeos periódicos (0 = off)
               </legend>
-              <div class="grid grid-cols-4 gap-3">
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <Field label="Integridad (ms)" hint="todas las clases">
                   <input v-model.number="form.integrityScanMs" class="forge-input" type="number" placeholder="3600000" />
                 </Field>

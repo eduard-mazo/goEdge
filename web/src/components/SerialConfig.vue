@@ -122,7 +122,7 @@
           </div>
           <form @submit.prevent="saveDevice" class="p-5 space-y-4">
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="ID (identificador único)">
                 <input v-model="form.id" class="forge-input" :disabled="!!editId" required placeholder="flow-01" />
               </Field>
@@ -148,7 +148,7 @@
                 ⚠ Otro esclavo ya usa <strong>{{ form.port }}</strong> a {{ lineConflict }}. El bus tiene un solo juego
                 de parámetros — manda el primer esclavo; estos se ignorarán.
               </p>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Baudios">
                   <select v-model.number="form.baudRate" class="forge-input">
                     <option v-for="b in bauds" :key="b" :value="b">{{ b }}</option>
@@ -182,7 +182,7 @@
 
             <fieldset class="space-y-3">
               <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Sondeo</legend>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Cadencia (ms)" hint="por defecto 1000">
                   <input v-model.number="form.scanRateMs" class="forge-input" type="number" placeholder="1000" />
                 </Field>
@@ -225,7 +225,7 @@
                       <input type="checkbox" v-model="form.rs485.rxDuringTx" /> Rx durante Tx
                     </label>
                   </div>
-                  <div class="grid grid-cols-2 gap-4">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <Field label="Espera antes de TX (µs)">
                       <input v-model.number="form.rs485.delayRtsBeforeSendUs" class="forge-input" type="number" min="0" placeholder="0" />
                     </Field>

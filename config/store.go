@@ -87,6 +87,14 @@ func (s *Store) UpdateSystem(sys SystemConfig) error {
 	return s.save()
 }
 
+// UpdateDNP3Server replaces only the DNP3 outstation-server section.
+func (s *Store) UpdateDNP3Server(srv DNP3OutstationServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg.DNP3Server = srv
+	return s.save()
+}
+
 // UpsertOutstation adds or replaces a DNP3Outstation by ID.
 func (s *Store) UpsertOutstation(o DNP3Outstation) error {
 	s.mu.Lock()

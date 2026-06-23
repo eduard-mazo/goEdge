@@ -35,6 +35,13 @@
 #include "opendnp3/app/OctetString.h"
 #include "opendnp3/app/parsing/ICollection.h"
 #include "opendnp3/gen/ChannelState.h"
+#include "opendnp3/gen/CommandStatus.h"
+#include "opendnp3/gen/DoubleBit.h"
+#include "opendnp3/gen/EventAnalogOutputStatusVariation.h"
+#include "opendnp3/gen/EventAnalogVariation.h"
+#include "opendnp3/gen/ServerAcceptMode.h"
+#include "opendnp3/gen/StaticAnalogOutputStatusVariation.h"
+#include "opendnp3/gen/StaticAnalogVariation.h"
 #include "opendnp3/logging/ILogHandler.h"
 #include "opendnp3/logging/LogLevels.h"
 #include "opendnp3/master/HeaderInfo.h"
@@ -44,6 +51,14 @@
 #include "opendnp3/master/ISOEHandler.h"
 #include "opendnp3/master/MasterStackConfig.h"
 #include "opendnp3/master/TaskConfig.h"
+#include "opendnp3/outstation/DatabaseConfig.h"
+#include "opendnp3/outstation/DefaultOutstationApplication.h"
+#include "opendnp3/outstation/EventBufferConfig.h"
+#include "opendnp3/outstation/IOutstation.h"
+#include "opendnp3/outstation/IOutstationApplication.h"
+#include "opendnp3/outstation/OutstationStackConfig.h"
+#include "opendnp3/outstation/SimpleCommandHandler.h"
+#include "opendnp3/outstation/UpdateBuilder.h"
 #include "opendnp3/util/TimeDuration.h"
 #include "opendnp3/util/UTCTimestamp.h"
 
@@ -107,6 +122,28 @@ public:
 
 private:
     const odc_callbacks* cbs;
+    void* ctx;
+};
+
+// --- IChannelListener (outstation) -----------------------------------------
+//
+// The outstation passes its own callback vtable (odc_outstation_callbacks)
+// rather than the manager's odc_callbacks, so it needs a listener bound to a
+// plain function pointer + ctx instead of the master's ShimChannelListener.
+
+class FnChannelListener final : public IChannelListener
+{
+public:
+    FnChannelListener(void (*fn)(void*, int), void* ctx) : fn(fn), ctx(ctx) {}
+
+    void OnStateChange(ChannelState state) override
+    {
+        if (fn)
+            fn(ctx, static_cast<int>(state));
+    }
+
+private:
+    void (*fn)(void*, int);
     void* ctx;
 };
 
@@ -255,6 +292,71 @@ struct odc_master
     std::shared_ptr<ShimMasterApplication> app;
     std::vector<std::shared_ptr<IMasterScan>> scans;
 };
+
+struct odc_outstation
+{
+    std::shared_ptr<IChannel> channel;
+    std::shared_ptr<IOutstation> outstation;
+    std::shared_ptr<ICommandHandler> commandHandler;
+    std::shared_ptr<IOutstationApplication> app;
+    std::shared_ptr<FnChannelListener> listener;
+};
+
+// --- outstation helpers ----------------------------------------------------
+
+namespace
+{
+
+// A synchronized DNPTime from unix-ms, or an INVALID (no-timestamp) DNPTime
+// when ts_ms is 0 — opendnp3 then serves the point without a valid time.
+DNPTime mk_time(uint64_t ts_ms)
+{
+    return ts_ms ? DNPTime(ts_ms) : DNPTime();
+}
+
+// Apply a single built UpdateBuilder to the outstation. Apply() posts to the
+// outstation's asio strand, so this is safe from any thread.
+int apply_one(odc_outstation* os, UpdateBuilder& b)
+{
+    if (!os || !os->outstation)
+        return 1;
+    try {
+        os->outstation->Apply(b.Build());
+    } catch (...) {
+        return 1;
+    }
+    return 0;
+}
+
+// Build a DatabaseConfig with contiguous indices [0, count) per type, each with
+// default class (1) and default static/event variations.
+DatabaseConfig build_db(const odc_db_sizes& s)
+{
+    DatabaseConfig db;
+
+    // Analogs are served as DOUBLE-precision float (static g30v6 / event g32v8)
+    // rather than the opendnp3 default g30v1/g32v1, which are 32-bit INTEGER and
+    // would truncate the gateway's fractional engineering values on the wire.
+    AnalogConfig analogCfg;
+    analogCfg.svariation = StaticAnalogVariation::Group30Var6;
+    analogCfg.evariation = EventAnalogVariation::Group32Var8;
+
+    AOStatusConfig aoStatusCfg;
+    aoStatusCfg.svariation = StaticAnalogOutputStatusVariation::Group40Var4;
+    aoStatusCfg.evariation = EventAnalogOutputStatusVariation::Group42Var8;
+
+    for (uint32_t i = 0; i < s.binary; ++i) db.binary_input[static_cast<uint16_t>(i)] = BinaryConfig();
+    for (uint32_t i = 0; i < s.double_bit; ++i) db.double_binary[static_cast<uint16_t>(i)] = DoubleBitBinaryConfig();
+    for (uint32_t i = 0; i < s.analog; ++i) db.analog_input[static_cast<uint16_t>(i)] = analogCfg;
+    for (uint32_t i = 0; i < s.counter; ++i) db.counter[static_cast<uint16_t>(i)] = CounterConfig();
+    for (uint32_t i = 0; i < s.frozen_counter; ++i) db.frozen_counter[static_cast<uint16_t>(i)] = FrozenCounterConfig();
+    for (uint32_t i = 0; i < s.binary_output_status; ++i) db.binary_output_status[static_cast<uint16_t>(i)] = BOStatusConfig();
+    for (uint32_t i = 0; i < s.analog_output_status; ++i) db.analog_output_status[static_cast<uint16_t>(i)] = aoStatusCfg;
+    for (uint32_t i = 0; i < s.octet_string; ++i) db.octet_string[static_cast<uint16_t>(i)] = OctetStringConfig();
+    return db;
+}
+
+} // namespace
 
 // --- C API -----------------------------------------------------------------
 
@@ -419,6 +521,139 @@ void odc_master_destroy(odc_master* mst)
     if (mst->channel)
         mst->channel->Shutdown();
     delete mst;
+}
+
+// --- outstation server -----------------------------------------------------
+
+odc_outstation* odc_manager_add_outstation(odc_manager* mgr, const char* id,
+                                           odc_outstation_config cfg,
+                                           odc_outstation_callbacks cbs, void* ctx)
+{
+    if (!mgr || !mgr->manager)
+        return nullptr;
+
+    auto* os = new (std::nothrow) odc_outstation();
+    if (!os)
+        return nullptr;
+
+    const std::string sid = id ? id : "outstation";
+    const std::string host = cfg.bind_host ? cfg.bind_host : "0.0.0.0";
+
+    try {
+        os->listener = std::make_shared<FnChannelListener>(cbs.on_channel_state, ctx);
+
+        // A TCP server: the master (SCADA) connects to us. CloseExisting drops a
+        // stale prior connection when the master reconnects.
+        os->channel = mgr->manager->AddTCPServer(sid, LogLevels(mgr->logLevels),
+                                                 ServerAcceptMode::CloseExisting,
+                                                 IPEndpoint(host, cfg.port), os->listener);
+        if (!os->channel) {
+            delete os;
+            return nullptr;
+        }
+
+        OutstationStackConfig stack(build_db(cfg.sizes));
+        stack.outstation.eventBufferConfig =
+            EventBufferConfig::AllTypes(cfg.event_buffer_size ? cfg.event_buffer_size : 100);
+        stack.outstation.params.allowUnsolicited = cfg.allow_unsolicited != 0;
+        stack.link.LocalAddr = cfg.local_address;
+        stack.link.RemoteAddr = cfg.master_address;
+        stack.link.KeepAliveTimeout = TimeDuration::Max();
+
+        // Monitoring-only: reject every control with NOT_SUPPORTED until the
+        // SCADA→field passthrough phase wires controls to the field drivers.
+        os->commandHandler = std::make_shared<SimpleCommandHandler>(CommandStatus::NOT_SUPPORTED);
+        os->app = DefaultOutstationApplication::Create();
+
+        os->outstation = os->channel->AddOutstation(sid, os->commandHandler, os->app, stack);
+        if (!os->outstation) {
+            os->channel->Shutdown();
+            delete os;
+            return nullptr;
+        }
+    } catch (...) {
+        if (os->channel)
+            os->channel->Shutdown();
+        delete os;
+        return nullptr;
+    }
+    return os;
+}
+
+int odc_outstation_update_binary(odc_outstation* os, uint16_t index, int value, uint8_t flags, uint64_t ts_ms)
+{
+    UpdateBuilder b;
+    b.Update(Binary(value != 0, Flags(flags), mk_time(ts_ms)), index);
+    return apply_one(os, b);
+}
+
+int odc_outstation_update_double_bit(odc_outstation* os, uint16_t index, int state, uint8_t flags, uint64_t ts_ms)
+{
+    UpdateBuilder b;
+    b.Update(DoubleBitBinary(static_cast<DoubleBit>(state), Flags(flags), mk_time(ts_ms)), index);
+    return apply_one(os, b);
+}
+
+int odc_outstation_update_analog(odc_outstation* os, uint16_t index, double value, uint8_t flags, uint64_t ts_ms)
+{
+    UpdateBuilder b;
+    b.Update(Analog(value, Flags(flags), mk_time(ts_ms)), index);
+    return apply_one(os, b);
+}
+
+int odc_outstation_update_counter(odc_outstation* os, uint16_t index, uint32_t value, uint8_t flags, uint64_t ts_ms)
+{
+    UpdateBuilder b;
+    b.Update(Counter(value, Flags(flags), mk_time(ts_ms)), index);
+    return apply_one(os, b);
+}
+
+int odc_outstation_update_binary_output_status(odc_outstation* os, uint16_t index, int value, uint8_t flags, uint64_t ts_ms)
+{
+    UpdateBuilder b;
+    b.Update(BinaryOutputStatus(value != 0, Flags(flags), mk_time(ts_ms)), index);
+    return apply_one(os, b);
+}
+
+int odc_outstation_update_analog_output_status(odc_outstation* os, uint16_t index, double value, uint8_t flags, uint64_t ts_ms)
+{
+    UpdateBuilder b;
+    b.Update(AnalogOutputStatus(value, Flags(flags), mk_time(ts_ms)), index);
+    return apply_one(os, b);
+}
+
+int odc_outstation_update_octet_string(odc_outstation* os, uint16_t index, const uint8_t* data, size_t len)
+{
+    // DNP3 octet strings are 1..255 bytes; clamp so OctetData never over-runs.
+    if (len > 255)
+        len = 255;
+    UpdateBuilder b;
+    b.Update(OctetString(Buffer(data, static_cast<uint16_t>(len))), index);
+    return apply_one(os, b);
+}
+
+int odc_outstation_enable(odc_outstation* os)
+{
+    if (!os || !os->outstation)
+        return 1;
+    return os->outstation->Enable() ? 0 : 1;
+}
+
+int odc_outstation_disable(odc_outstation* os)
+{
+    if (!os || !os->outstation)
+        return 1;
+    return os->outstation->Disable() ? 0 : 1;
+}
+
+void odc_outstation_destroy(odc_outstation* os)
+{
+    if (!os)
+        return;
+    // Shutting down the channel tears down its bound outstation too.
+    if (os->channel)
+        os->channel->Shutdown();
+    delete os;
 }
 
 } // extern "C"

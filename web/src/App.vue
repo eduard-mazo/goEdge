@@ -164,6 +164,7 @@
         <Dashboard       v-if="activeTab === 'dashboard'" />
         <BrokerConfig    v-if="activeTab === 'broker'" />
         <SparkplugCfg    v-if="activeTab === 'sparkplug'" />
+        <DNP3ServerConfig v-if="activeTab === 'dnp3server'" />
         <OutstationsConfig v-if="activeTab === 'outstations'" />
         <ModbusConfig    v-if="activeTab === 'modbus'" />
         <SerialConfig    v-if="activeTab === 'serial'" />
@@ -182,6 +183,7 @@ import { api } from '@/api/client'
 import Dashboard     from '@/components/Dashboard.vue'
 import BrokerConfig  from '@/components/BrokerConfig.vue'
 import SparkplugCfg  from '@/components/SparkplugConfig.vue'
+import DNP3ServerConfig from '@/components/DNP3ServerConfig.vue'
 import OutstationsConfig from '@/components/OutstationsConfig.vue'
 import ModbusConfig   from '@/components/ModbusConfig.vue'
 import SerialConfig   from '@/components/SerialConfig.vue'
@@ -191,7 +193,7 @@ import QuickConfig   from '@/components/QuickConfig.vue'
 import SystemPanel   from '@/components/SystemPanel.vue'
 import {
   LayoutDashboard, Wifi, Zap, Server, Cpu, Cable,
-  Waypoints, Gauge, ScrollText, Settings, Menu, X,
+  Waypoints, Gauge, ScrollText, Settings, Menu, X, RadioTower,
 } from 'lucide-vue-next'
 
 // Configure-toggle icon (referenced in template as IconCog)
@@ -203,6 +205,7 @@ const tabs = [
   { id: 'dashboard',  label: 'Resumen',      icon: LayoutDashboard },
   { id: 'broker',     label: 'Broker',       icon: Wifi            },
   { id: 'sparkplug',  label: 'Sparkplug',    icon: Zap             },
+  { id: 'dnp3server', label: 'Servidor DNP3', icon: RadioTower     },
   { id: 'outstations',label: 'Estaciones',   icon: Server          },
   { id: 'modbus',     label: 'Modbus/TCP',   icon: Cpu             },
   { id: 'serial',     label: 'Serial · RTU', icon: Cable           },

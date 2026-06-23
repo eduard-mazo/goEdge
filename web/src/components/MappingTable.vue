@@ -34,12 +34,13 @@
            so an auto layout would re-fit the columns to the visible window and
            the header would slip out of alignment while scrolling. Fixed widths
            keep the header locked to the data. -->
-      <table class="w-full min-w-[1040px] table-fixed">
+      <table class="w-full min-w-[1156px] table-fixed">
         <colgroup>
           <col />                          <!-- Métrica (flexes) -->
           <col class="w-[72px]" />         <!-- Proto -->
           <col class="w-[130px]" />        <!-- Fuente -->
           <col class="w-[210px]" />        <!-- Punto -->
+          <col class="w-[116px]" />        <!-- Salida DNP3 -->
           <col class="w-[96px]" />         <!-- Escala -->
           <col class="w-[80px]" />         <!-- UI -->
           <col class="w-[118px]" />        <!-- Banda muerta -->
@@ -52,6 +53,7 @@
             <SortTh col="proto"    label="Proto"        :sort="sort" @sort="toggle" />
             <SortTh col="source"   label="Fuente"       :sort="sort" @sort="toggle" />
             <SortTh col="point"    label="Punto"        :sort="sort" @sort="toggle" />
+            <SortTh col="serve"    label="Salida DNP3"  :sort="sort" @sort="toggle" />
             <SortTh col="scale"    label="Escala"       align="right" :sort="sort" @sort="toggle" />
             <SortTh col="unit"     label="UI"           :sort="sort" @sort="toggle" />
             <SortTh col="deadband" label="Banda muerta" align="right" :sort="sort" @sort="toggle" />
@@ -60,7 +62,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="padTop" class="vspacer" :style="{ height: padTop + 'px' }"><td colspan="9"></td></tr>
+          <tr v-if="padTop" class="vspacer" :style="{ height: padTop + 'px' }"><td colspan="10"></td></tr>
           <tr v-for="{ row: m } in visible" :key="m.id" class="vrow">
             <td class="font-mono text-xs font-medium text-foreground">{{ m.metricName }}</td>
             <td>
@@ -70,6 +72,10 @@
             </td>
             <td class="font-mono text-[11px]">{{ srcId(m) }}</td>
             <td class="font-mono text-[11px] text-text-secondary whitespace-nowrap">{{ pointLabel(m) }}</td>
+            <td>
+              <span v-if="m.serveDnp3" class="served-tag">{{ outLabel(m) }}</span>
+              <span v-else class="font-mono text-[11px] text-text-dim">—</span>
+            </td>
             <td class="font-mono text-[11px] text-text-secondary text-right tabular-nums">
               {{ m.scale ?? 1 }}{{ m.offset ? ' +' + m.offset : '' }}
             </td>
@@ -90,7 +96,7 @@
               </div>
             </td>
           </tr>
-          <tr v-if="padBottom" class="vspacer" :style="{ height: padBottom + 'px' }"><td colspan="9"></td></tr>
+          <tr v-if="padBottom" class="vspacer" :style="{ height: padBottom + 'px' }"><td colspan="10"></td></tr>
         </tbody>
       </table>
       </div>
@@ -121,7 +127,7 @@
               </button>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Nombre de métrica" hint="Identificador único Sparkplug B">
                 <input v-model="form.metricName" class="forge-input" placeholder="feeder/voltage_kv" required />
               </Field>
@@ -154,7 +160,7 @@
 
             <!-- DNP3 point identity -->
             <template v-if="form.protocol === 'dnp3'">
-              <div class="grid grid-cols-3 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <Field label="Tipo de punto" hint="grupo/variación DNP3" class="col-span-1">
                   <select v-model="form.pointType" class="forge-input">
                     <option v-for="pt in pointTypes" :key="pt.value" :value="pt.value">{{ pt.label }}</option>
@@ -176,7 +182,7 @@
 
             <!-- Modbus point identity -->
             <template v-else>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Función">
                   <select v-model="form.function" class="forge-input">
                     <option v-for="f in modbusFunctions" :key="f.value" :value="f.value">{{ f.label }}</option>
@@ -186,7 +192,7 @@
                   <input v-model.number="form.address" class="forge-input" type="number" min="0" max="65535" />
                 </Field>
               </div>
-              <div class="grid grid-cols-3 gap-4" v-if="isRegister">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-4" v-if="isRegister">
                 <Field label="Tipo de dato">
                   <select v-model="form.dataType" class="forge-input">
                     <option v-for="dt in modbusDataTypes" :key="dt" :value="dt">{{ dt }}</option>
@@ -203,7 +209,7 @@
               </div>
             </template>
 
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Field label="Escala" hint="valor × escala + offset">
                 <input v-model.number="form.scale" class="forge-input" type="number" step="any" placeholder="1" />
               </Field>
@@ -224,7 +230,7 @@
               <div class="text-muted-foreground text-[10px] uppercase tracking-widest font-sans font-semibold">
                 Catálogo UNS (NBIRTH/DBIRTH)
               </div>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Nombre" hint="uns/name — nombre de la señal en el catálogo">
                   <input v-model="form.nombre" class="forge-input" placeholder="Valvula abierta" />
                 </Field>
@@ -232,7 +238,7 @@
                   <input v-model="form.descripcion" class="forge-input" placeholder="Valvula gas confirmación apertura" />
                 </Field>
               </div>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Código de señal" hint="uns/code — vacío = hoja de la métrica (máx. 20)">
                   <input v-model="form.signalCode" class="forge-input" maxlength="20" :placeholder="unsCodeDefault" />
                 </Field>
@@ -244,6 +250,38 @@
                 uns/code = <span class="text-citrico">{{ form.signalCode || unsCodeDefault }}</span>
                 · uns/instance = <span class="text-citrico">{{ form.instance || unsInstanceDefault }}</span>
               </p>
+            </div>
+
+            <!-- DNP3 outstation-server output (northbound to SCADA) -->
+            <div class="border border-border rounded-sm p-4 space-y-4" style="background:var(--tk-surface)">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="form.serveDnp3" />
+                <span class="text-muted-foreground text-[10px] uppercase tracking-widest font-sans font-semibold">
+                  Exponer en outstation DNP3
+                </span>
+              </label>
+              <template v-if="form.serveDnp3">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Field label="Tipo">
+                    <select v-model="form.outType" class="forge-input">
+                      <option v-for="pt in pointTypes" :key="pt.value" :value="pt.value">{{ pt.label }}</option>
+                    </select>
+                  </Field>
+                  <Field label="Índice">
+                    <input v-model.number="form.outIndex" class="forge-input" type="number" min="0" max="65535" />
+                  </Field>
+                  <Field label="Clase" hint="reservado">
+                    <select v-model.number="form.outClass" class="forge-input">
+                      <option :value="1">Clase 1</option>
+                      <option :value="2">Clase 2</option>
+                      <option :value="3">Clase 3</option>
+                    </select>
+                  </Field>
+                </div>
+                <p class="font-mono text-[11px] text-text-dim">
+                  → <span class="text-citrico">{{ shortPoint(form.outType || 'analog') }} #{{ form.outIndex ?? 0 }}</span>
+                </p>
+              </template>
             </div>
 
             <label v-if="form.protocol === 'dnp3'" class="flex items-center gap-2 cursor-pointer font-sans text-sm text-text-secondary">
@@ -359,6 +397,11 @@ function pointLabel(m: SignalMapping): string {
   return `${shortPoint(m.pointType)} #${m.index}${m.eventClass ? ' · C' + m.eventClass : ''}`
 }
 
+// Served-point label for the "Salida DNP3" column: the served group + index.
+function outLabel(m: SignalMapping): string {
+  return `${shortPoint(m.outType ?? 'analog')} #${m.outIndex ?? 0}`
+}
+
 const matched = computed(() => {
   const f = filter.value.toLowerCase()
   if (!f) return store.mappings
@@ -379,6 +422,7 @@ const { sort, toggle, sorted } = useSort(matched, {
     scale:    (m) => m.scale ?? 1,
     unit:     (m) => m.engineeringUnit ?? '',
     deadband: (m) => m.deadband ?? 0,
+    serve:    (m) => (m.serveDnp3 ? 1 : 0),
     estado:   (m) => (m.enabled ? 1 : 0),
   },
 })
@@ -395,6 +439,7 @@ const emptyForm = (): SignalMapping => ({
   scale: 1, offset: 0, engineeringUnit: '',
   signalCode: '', instance: '', nombre: '', descripcion: '',
   deadband: 0, publishOnPoll: false,
+  serveDnp3: false, outType: 'analog', outIndex: 0, outClass: 1, outDeadband: 0,
   enabled: true,
 })
 const form = ref<SignalMapping>(emptyForm())
@@ -445,10 +490,16 @@ async function importFile(ev: Event) {
 .seg-btn { font-family: var(--font-sans); font-weight: 700; font-size: 11px; padding: 7px 16px; color: var(--muted-foreground); background: transparent; border: none; cursor: pointer; transition: background 0.12s, color 0.12s; }
 .seg-btn + .seg-btn { border-left: 1.5px solid var(--border); }
 .seg-btn--active { background: color-mix(in srgb, var(--epm-bosque) 12%, transparent); color: var(--epm-bosque); }
+/* On narrow phones let the 3-protocol switch span the row instead of overflowing. */
+@media (max-width: 480px) {
+  .seg { display: flex; width: 100%; }
+  .seg-btn { flex: 1 1 0; padding: 7px 6px; text-align: center; }
+}
 .proto-tag { font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; border: 1px solid; }
 .proto-tag--dnp { color: var(--epm-bosque); border-color: color-mix(in srgb, var(--epm-bosque) 40%, transparent); background: color-mix(in srgb, var(--epm-bosque) 8%, transparent); }
 .proto-tag--mb  { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 45%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 10%, transparent); }
 .proto-tag--rtu { color: var(--tk-amber-bright); border-color: color-mix(in srgb, var(--tk-amber-base) 55%, transparent); background: color-mix(in srgb, var(--tk-amber-base) 16%, transparent); letter-spacing: 0.1em; }
+.served-tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--epm-bosque); border: 1px solid color-mix(in srgb, var(--epm-bosque) 40%, transparent); background: color-mix(in srgb, var(--epm-bosque) 8%, transparent); padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
 
 /* sticky header sits on the muted band when the body scrolls */
 thead th { background: var(--muted); }
