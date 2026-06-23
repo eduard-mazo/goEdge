@@ -83,6 +83,7 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/api/config/mqtt", s.handleMQTT)
 	s.mux.HandleFunc("/api/config/sparkplug", s.handleSparkplug)
 	s.mux.HandleFunc("/api/config/system", s.handleSystem)
+	s.mux.HandleFunc("/api/config/dnp3Server", s.handleDNP3Server)
 	s.mux.HandleFunc("/api/system/telemetry", s.handleSystemTelemetry)
 
 	s.mux.HandleFunc("/api/outstations", s.handleOutstations)
@@ -207,6 +208,35 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 			s.gw.pub.ApplySystemConfig(cfg)
 		}
 		s.gw.logEvent("info", "System monitoring config updated")
+		writeOK(w, cfg)
+	default:
+		writeFail(w, http.StatusMethodNotAllowed, "GET or PUT")
+	}
+}
+
+// handleDNP3Server gets/updates the northbound DNP3 outstation-server config.
+// Like the outstation/device sections, a change takes effect on the next gateway
+// start (the publisher reads it in New()); it is not hot-applied to a running
+// gateway.
+func (s *Server) handleDNP3Server(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeOK(w, s.gw.store.Get().DNP3Server)
+	case http.MethodPut:
+		var cfg config.DNP3OutstationServer
+		if err := decode(r.Body, &cfg); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateDNP3Server(&cfg); err != nil {
+			writeFail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.gw.store.UpdateDNP3Server(cfg); err != nil {
+			writeFail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.gw.logEvent("info", "DNP3 outstation server config updated (effective on next gateway start)")
 		writeOK(w, cfg)
 	default:
 		writeFail(w, http.StatusMethodNotAllowed, "GET or PUT")
@@ -641,6 +671,33 @@ func validateSystem(cfg *config.SystemConfig) error {
 	return nil
 }
 
+// validateDNP3Server normalizes and bounds-checks the outstation-server config,
+// filling defaults in place so a sparse PUT is valid. Link addresses are only
+// required when the server is enabled (so a disabled, half-filled form saves).
+func validateDNP3Server(cfg *config.DNP3OutstationServer) error {
+	if cfg.ID == "" {
+		cfg.ID = "dnp3-server"
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 20000
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return fmt.Errorf("port must be 1-65535")
+	}
+	if cfg.EventBufferSize < 0 {
+		return fmt.Errorf("eventBufferSize must be >= 0")
+	}
+	if cfg.Enabled {
+		if cfg.LocalAddress == 0 {
+			return fmt.Errorf("localAddress is required (typical: 1024)")
+		}
+		if cfg.MasterAddress == 0 {
+			return fmt.Errorf("masterAddress is required (typical: 1)")
+		}
+	}
+	return nil
+}
+
 func validateOutstation(o config.DNP3Outstation) error {
 	if o.ID == "" {
 		return fmt.Errorf("id is required")
@@ -742,6 +799,17 @@ func validateMapping(sig config.SignalMapping, cfg config.AppConfig) error {
 	}
 	if len([]rune(sig.Instance)) > 30 {
 		return fmt.Errorf("instance must be at most 30 characters")
+	}
+
+	// DNP3 outstation-server output applies to any protocol's mapping: validate
+	// the served point type/class independent of the source addressing below.
+	if sig.ServeDNP3 {
+		if !validPointTypes[sig.OutType] {
+			return fmt.Errorf("outType must be one of binary|double_bit_binary|binary_output_status|counter|frozen_counter|analog|analog_output_status|octet_string")
+		}
+		if sig.OutClass > 3 {
+			return fmt.Errorf("outClass must be 0..3")
+		}
 	}
 
 	if sig.UsesModbusFraming() {

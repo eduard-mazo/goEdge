@@ -30,6 +30,9 @@ export const api = {
   getSystem:   ()      => req<SystemConfig>('GET',  '/config/system'),
   setSystem:   (c: SystemConfig) => req<SystemConfig>('PUT', '/config/system', c),
 
+  getDNP3Server: ()    => req<DNP3OutstationServer>('GET', '/config/dnp3Server'),
+  setDNP3Server: (c: DNP3OutstationServer) => req<DNP3OutstationServer>('PUT', '/config/dnp3Server', c),
+
   getOutstations:    ()  => req<DNP3Outstation[]>('GET', '/outstations'),
   addOutstation:     (o: DNP3Outstation) => req<DNP3Outstation>('POST', '/outstations', o),
   updateOutstation:  (id: string, o: DNP3Outstation) => req<DNP3Outstation>('PUT', `/outstations/${id}`, o),
@@ -134,6 +137,20 @@ export interface DNP3Outstation {
   startupIntegrity?: boolean
 
   enabled: boolean
+}
+
+// DNP3OutstationServer configures the gateway's own northbound DNP3 outstation
+// (the TCP server a SCADA master like Survalent polls). Single instance.
+export interface DNP3OutstationServer {
+  enabled: boolean
+  id?: string                // status key; default "dnp3-server"
+  label?: string
+  bindHost?: string          // listen address; default 0.0.0.0
+  port?: number              // DNP3/IP listen port; default 20000
+  localAddress: number       // this outstation's link addr (typical 1024+)
+  masterAddress: number      // the SCADA master's link addr (typical 1)
+  allowUnsolicited?: boolean
+  eventBufferSize?: number   // per-type event buffer depth; default 100
 }
 
 export type PointType =
@@ -250,6 +267,14 @@ export interface SignalMapping {
   deadband?: number
   publishOnPoll?: boolean
 
+  // DNP3 outstation-server output: re-expose this mapped point on the gateway's
+  // own outstation so a SCADA master can poll it.
+  serveDnp3?: boolean
+  outType?: PointType        // served point type
+  outIndex?: number          // index within outType's space
+  outClass?: number          // reserved: DNP3 event class 1|2|3
+  outDeadband?: number       // reserved: analog event deadband
+
   enabled: boolean
 }
 
@@ -261,6 +286,7 @@ export interface AppConfig {
   serialDevices: SerialDevice[]
   mappings: SignalMapping[]
   system: SystemConfig
+  dnp3Server: DNP3OutstationServer
 }
 
 export interface GatewayStatus {
