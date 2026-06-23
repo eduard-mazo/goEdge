@@ -66,7 +66,7 @@
           </div>
           <form @submit.prevent="saveDevice" class="p-5 space-y-4">
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="ID (identificador único)">
                 <input v-model="form.id" class="forge-input" :disabled="!!editId" required placeholder="plc-01" />
               </Field>
@@ -75,7 +75,7 @@
               </Field>
             </div>
 
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Field label="Host" class="col-span-2">
                 <input v-model="form.host" class="forge-input" placeholder="192.168.1.50" required />
               </Field>
@@ -84,7 +84,7 @@
               </Field>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Unit ID" hint="Dirección del esclavo (típico: 1)">
                 <input v-model.number="form.unitId" class="forge-input" type="number" min="0" max="255" />
               </Field>
@@ -98,7 +98,7 @@
 
             <fieldset class="space-y-3">
               <legend class="font-mono text-[10px] uppercase tracking-[0.18em] text-text-dim">Sondeo</legend>
-              <div class="grid grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Cadencia (ms)" hint="por defecto 1000">
                   <input v-model.number="form.scanRateMs" class="forge-input" type="number" placeholder="1000" />
                 </Field>

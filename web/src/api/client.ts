@@ -140,7 +140,7 @@ export interface DNP3Outstation {
 }
 
 // DNP3OutstationServer configures the gateway's own northbound DNP3 outstation
-// (the TCP server a SCADA master like Survalent polls). Single instance.
+// (the TCP server a SCADA master polls). Single instance.
 export interface DNP3OutstationServer {
   enabled: boolean
   id?: string                // status key; default "dnp3-server"
