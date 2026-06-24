@@ -73,6 +73,10 @@ type device struct {
 	client  mb.Client
 	conn    bool // connection currently established
 
+	// connMu serializes all client access (the poll loop's reads and control
+	// writes) — one TCP connection can't interleave request/response pairs.
+	connMu sync.Mutex
+
 	mu     sync.RWMutex
 	status source.Status
 }
@@ -231,6 +235,8 @@ func (p *Poller) pollDevice(ctx context.Context, dev *device) {
 // scan reads every configured point once and emits samples. Connection failures
 // are recorded in status and retried on the next tick.
 func (p *Poller) scan(ctx context.Context, dev *device) {
+	dev.connMu.Lock()
+	defer dev.connMu.Unlock()
 	if !dev.conn {
 		if err := dev.handler.Connect(ctx); err != nil {
 			p.setConn(dev, false, "connect: "+err.Error())
@@ -302,6 +308,52 @@ func (p *Poller) read(ctx context.Context, dev *device, pt Point) ([]byte, error
 		}
 	}
 	return nil, lastErr
+}
+
+func (p *Poller) device(id string) (*device, error) {
+	p.mu.Lock()
+	dev, ok := p.devices[id]
+	p.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("modbus: unknown device %q", id)
+	}
+	return dev, nil
+}
+
+// WriteCoil writes a single coil (a binary control), serialized with the
+// device's poll loop. on → 0xFF00, off → 0x0000. Used by DNP3→field passthrough.
+func (p *Poller) WriteCoil(deviceID string, addr uint16, on bool) error {
+	dev, err := p.device(deviceID)
+	if err != nil {
+		return err
+	}
+	dev.connMu.Lock()
+	defer dev.connMu.Unlock()
+	if dev.client == nil || !dev.conn {
+		return fmt.Errorf("modbus device %q not connected", deviceID)
+	}
+	var v uint16
+	if on {
+		v = 0xFF00
+	}
+	_, err = dev.client.WriteSingleCoil(context.Background(), addr, v)
+	return err
+}
+
+// WriteRegister writes a single holding register (an analog control), serialized
+// with the device's poll loop.
+func (p *Poller) WriteRegister(deviceID string, addr uint16, value uint16) error {
+	dev, err := p.device(deviceID)
+	if err != nil {
+		return err
+	}
+	dev.connMu.Lock()
+	defer dev.connMu.Unlock()
+	if dev.client == nil || !dev.conn {
+		return fmt.Errorf("modbus device %q not connected", deviceID)
+	}
+	_, err = dev.client.WriteSingleRegister(context.Background(), addr, value)
+	return err
 }
 
 func (p *Poller) setConn(dev *device, connected bool, errMsg string) {

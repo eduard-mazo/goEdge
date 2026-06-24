@@ -79,6 +79,10 @@ type Publisher struct {
 	// gateway's aggregated data. Fed from handleSample, not a source.Source.
 	outstation dnp3.Outstation
 
+	// ctrlIdx routes a SCADA control on the outstation to a field write (Phase 8
+	// passthrough): keyed by (binary?, outIndex). Empty when no control mappings.
+	ctrlIdx map[ctrlKey]config.ControlMapping
+
 	node   *sparkplug.Node
 	client mqtt.Client
 
@@ -199,8 +203,19 @@ func New(cfg config.AppConfig) *Publisher {
 	p.modbus = modbus.New(p)
 	p.modbusRTU = modbusrtu.New(p)
 	p.sources = []source.Source{p.master, p.modbus, p.modbusRTU}
+	// Control passthrough (Phase 8): index the control mappings and, when the
+	// outstation is enabled, register the publisher as its command sink so SCADA
+	// controls become field writes.
+	p.ctrlIdx = make(map[ctrlKey]config.ControlMapping)
+	for _, c := range cfg.ControlMappings {
+		if !c.Enabled {
+			continue
+		}
+		p.ctrlIdx[ctrlKey{binary: c.IsBinaryControl(), index: c.OutIndex}] = c
+	}
 	if cfg.DNP3Server.Enabled {
-		p.outstation = dnp3.NewOutstation(cfg.DNP3Server, outstationSizes(cfg.Mappings), p)
+		p.outstation = dnp3.NewOutstation(cfg.DNP3Server, outstationSizes(cfg.Mappings, cfg.ControlMappings), p)
+		p.outstation.SetCommandSink(p)
 	}
 	if cfg.System.Enabled {
 		p.sysCollector = sysmon.New(cfg.System)
@@ -236,7 +251,7 @@ func normalizeMapping(sig config.SignalMapping) config.SignalMapping {
 // be sized to cover every served point. Frozen-counter outputs are served as
 // plain counters (opendnp3 has no direct frozen-counter setter), so they size
 // the counter space.
-func outstationSizes(mappings []config.SignalMapping) dnp3.OutstationDBSizes {
+func outstationSizes(mappings []config.SignalMapping, controls []config.ControlMapping) dnp3.OutstationDBSizes {
 	var s dnp3.OutstationDBSizes
 	bump := func(p *uint16, idx uint16) {
 		n := min(uint32(idx)+1, 65535)
@@ -265,7 +280,95 @@ func outstationSizes(mappings []config.SignalMapping) dnp3.OutstationDBSizes {
 			bump(&s.OctetString, sig.OutIndex)
 		}
 	}
+	// Control points need a matching output-status point in the database for
+	// opendnp3 to accept the control: a binary control → binary_output_status, an
+	// analog control → analog_output_status, at the control's OutIndex.
+	for _, c := range controls {
+		if !c.Enabled {
+			continue
+		}
+		if c.IsBinaryControl() {
+			bump(&s.BinaryOutputStatus, c.OutIndex)
+		} else {
+			bump(&s.AnalogOutputStatus, c.OutIndex)
+		}
+	}
 	return s
+}
+
+// --- dnp3.CommandSink (Phase 8 SCADA→field control passthrough) ---
+
+// ctrlKey routes a control to its mapping by point class (binary vs analog) and
+// index, so a binary and an analog control can share an index.
+type ctrlKey struct {
+	binary bool
+	index  uint16
+}
+
+// OnControlBinary handles a CROB a SCADA master operates on the gateway's
+// outstation: SELECT only validates the mapping exists; OPERATE writes the
+// mapped field coil. Unmapped controls are rejected. Runs on a DNP3 thread.
+func (p *Publisher) OnControlBinary(index uint16, on bool, isSelect bool) dnp3.ControlStatus {
+	m, ok := p.ctrlIdx[ctrlKey{binary: true, index: index}]
+	if !ok {
+		return dnp3.CtrlNotSupported
+	}
+	if isSelect {
+		return dnp3.CtrlAccepted
+	}
+	if err := p.writeControlBinary(m, on); err != nil {
+		p.logWarn(fmt.Sprintf("SCADA control binary #%d → %s: %v", index, m.SourceID, err))
+		return dnp3.CtrlNotSupported
+	}
+	p.logInfo(fmt.Sprintf("SCADA control: binary #%d = %v → %s coil@%d", index, on, m.SourceID, m.Address))
+	return dnp3.CtrlAccepted
+}
+
+// OnControlAnalog handles an analog-output control: OPERATE writes the mapped
+// field holding register (engineering value → raw via the mapping transform).
+func (p *Publisher) OnControlAnalog(index uint16, value float64, isSelect bool) dnp3.ControlStatus {
+	m, ok := p.ctrlIdx[ctrlKey{binary: false, index: index}]
+	if !ok {
+		return dnp3.CtrlNotSupported
+	}
+	if isSelect {
+		return dnp3.CtrlAccepted
+	}
+	if err := p.writeControlAnalog(m, value); err != nil {
+		p.logWarn(fmt.Sprintf("SCADA control analog #%d → %s: %v", index, m.SourceID, err))
+		return dnp3.CtrlNotSupported
+	}
+	p.logInfo(fmt.Sprintf("SCADA control: analog #%d = %g → %s reg@%d", index, value, m.SourceID, m.Address))
+	return dnp3.CtrlAccepted
+}
+
+func (p *Publisher) writeControlBinary(m config.ControlMapping, on bool) error {
+	switch m.Protocol {
+	case "modbus", "":
+		return p.modbus.WriteCoil(m.SourceID, m.Address, on)
+	default:
+		return fmt.Errorf("control protocol %q not supported (only modbus)", m.Protocol)
+	}
+}
+
+func (p *Publisher) writeControlAnalog(m config.ControlMapping, value float64) error {
+	scale := m.Scale
+	if scale == 0 {
+		scale = 1
+	}
+	raw := math.Round((value - m.Offset) / scale)
+	switch {
+	case raw < 0:
+		raw = 0
+	case raw > 65535:
+		raw = 65535
+	}
+	switch m.Protocol {
+	case "modbus", "":
+		return p.modbus.WriteRegister(m.SourceID, m.Address, uint16(raw))
+	default:
+		return fmt.Errorf("control protocol %q not supported (only modbus)", m.Protocol)
+	}
 }
 
 // serveOutstation pushes one mapped point onto the DNP3 outstation database so a

@@ -9,14 +9,48 @@ import "strconv"
 // SourceID; the publisher runs one source.Source per protocol and routes
 // samples to mappings by source ID.
 type AppConfig struct {
-	MQTT          MQTTConfig           `json:"mqtt"`
-	Sparkplug     SparkplugConfig      `json:"sparkplug"`
-	Outstations   []DNP3Outstation     `json:"outstations"`
-	ModbusDevices []ModbusDevice       `json:"modbusDevices"`
-	SerialDevices []SerialDevice       `json:"serialDevices"`
-	Mappings      []SignalMapping      `json:"mappings"`
-	System        SystemConfig         `json:"system"`
-	DNP3Server    DNP3OutstationServer `json:"dnp3Server"` // northbound DNP3 outstation
+	MQTT            MQTTConfig           `json:"mqtt"`
+	Sparkplug       SparkplugConfig      `json:"sparkplug"`
+	Outstations     []DNP3Outstation     `json:"outstations"`
+	ModbusDevices   []ModbusDevice       `json:"modbusDevices"`
+	SerialDevices   []SerialDevice       `json:"serialDevices"`
+	Mappings        []SignalMapping      `json:"mappings"`
+	System          SystemConfig         `json:"system"`
+	DNP3Server      DNP3OutstationServer `json:"dnp3Server"`      // northbound DNP3 outstation
+	ControlMappings []ControlMapping     `json:"controlMappings"` // SCADA→field control passthrough
+}
+
+// ControlMapping maps a control point on the gateway's own DNP3 outstation to a
+// field write, so a SCADA master can operate field outputs through the gateway
+// (Phase 8). When a master operates the outstation point (OutType, OutIndex),
+// the gateway writes the mapped field point. Unmapped controls are rejected.
+type ControlMapping struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+
+	// Outstation control point the SCADA master operates. OutType is the served
+	// type the master writes (binary/binary_output_status → CROB on/off; analog/
+	// analog_output_status → analog output value).
+	OutType  string `json:"outType"`
+	OutIndex uint16 `json:"outIndex"`
+
+	// Field write target. Protocol "modbus"|"modbusrtu" writes a coil (binary
+	// control) or a holding register (analog control) on SourceID at Address.
+	Protocol string `json:"protocol"`
+	SourceID string `json:"sourceId"`
+	Function string `json:"function"` // coil | holding_register
+	Address  uint16 `json:"address"`
+
+	// Analog value transform (engineering → raw register): raw = (value-offset)/scale.
+	Scale  float64 `json:"scale"`
+	Offset float64 `json:"offset"`
+
+	Enabled bool `json:"enabled"`
+}
+
+// IsBinaryControl reports whether the control operates a binary (CROB) point.
+func (c ControlMapping) IsBinaryControl() bool {
+	return c.OutType == "binary" || c.OutType == "binary_output_status"
 }
 
 // SystemConfig controls host-telemetry collection (CPU, memory, disk, network,

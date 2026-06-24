@@ -7,6 +7,17 @@ import (
 	"goMqttDnp3/source"
 )
 
+// commandSinkAdapter forwards goDnp3 control callbacks to the gateway's
+// CommandSink, converting the status enum (the values match 1:1).
+type commandSinkAdapter struct{ sink CommandSink }
+
+func (a commandSinkAdapter) OnControlBinary(index uint16, on, isSelect bool) godnp3.CommandStatus {
+	return godnp3.CommandStatus(a.sink.OnControlBinary(index, on, isSelect))
+}
+func (a commandSinkAdapter) OnControlAnalog(index uint16, value float64, isSelect bool) godnp3.CommandStatus {
+	return godnp3.CommandStatus(a.sink.OnControlAnalog(index, value, isSelect))
+}
+
 // handlerAdapter forwards goDnp3 callbacks to the gateway's source.Handler,
 // converting goDnp3.Measurement/Status to source.Sample/source.Status. A value
 // receiver keeps it cheap to pass to goDnp3.NewMaster/NewOutstation.
