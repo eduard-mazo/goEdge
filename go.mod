@@ -8,8 +8,12 @@ require (
 	github.com/grid-x/modbus v0.0.0-20260527064858-ef3bed576432
 	github.com/grid-x/serial v0.0.0-20211107191517-583c7356b3aa
 	github.com/shirou/gopsutil/v3 v3.24.5
+	goDnp3 v0.0.0
 	golang.org/x/sys v0.36.0
 )
+
+// goDnp3 is the shared DNP3 (opendnp3) binding, a sibling checkout.
+replace goDnp3 => ../goDnp3
 
 require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
