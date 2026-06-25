@@ -21,16 +21,60 @@
 #include <opendnp3/channel/PrintingChannelListener.h>
 #include <opendnp3/logging/LogLevels.h>
 #include <opendnp3/outstation/DefaultOutstationApplication.h>
+#include <opendnp3/outstation/ICommandHandler.h>
+#include <opendnp3/outstation/IUpdateHandler.h>
 #include <opendnp3/outstation/SimpleCommandHandler.h>
 #include <opendnp3/outstation/UpdateBuilder.h>
+#include <opendnp3/app/AnalogOutput.h>
+#include <opendnp3/app/ControlRelayOutputBlock.h>
+#include <opendnp3/app/MeasurementTypes.h>
+#include <opendnp3/gen/OperationType.h>
 
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
 
 using namespace opendnp3;
+
+// ReflectingCommandHandler accepts controls and writes them back into the
+// matching status point, so a master that operates a control can read the result
+// — this closes the gateway's SCADA→field control-passthrough loop. A CROB →
+// BinaryOutputStatus at the index; an analog output (any width) → AnalogOutputStatus.
+class ReflectingCommandHandler final : public ICommandHandler
+{
+public:
+    void Begin() override {}
+    void End() override {}
+
+    CommandStatus Select(const ControlRelayOutputBlock&, uint16_t) override { return CommandStatus::SUCCESS; }
+    CommandStatus Operate(const ControlRelayOutputBlock& c, uint16_t index, IUpdateHandler& h, OperateType) override
+    {
+        const bool on = (c.opType == OperationType::LATCH_ON || c.opType == OperationType::PULSE_ON);
+        h.Update(BinaryOutputStatus(on, Flags(0x01)), index);
+        std::cerr << "outstation_sim: CROB operate idx=" << index << " on=" << on << std::endl;
+        return CommandStatus::SUCCESS;
+    }
+
+    CommandStatus Select(const AnalogOutputInt16&, uint16_t) override { return CommandStatus::SUCCESS; }
+    CommandStatus Operate(const AnalogOutputInt16& c, uint16_t i, IUpdateHandler& h, OperateType) override { return ao(c.value, i, h); }
+    CommandStatus Select(const AnalogOutputInt32&, uint16_t) override { return CommandStatus::SUCCESS; }
+    CommandStatus Operate(const AnalogOutputInt32& c, uint16_t i, IUpdateHandler& h, OperateType) override { return ao(c.value, i, h); }
+    CommandStatus Select(const AnalogOutputFloat32&, uint16_t) override { return CommandStatus::SUCCESS; }
+    CommandStatus Operate(const AnalogOutputFloat32& c, uint16_t i, IUpdateHandler& h, OperateType) override { return ao(c.value, i, h); }
+    CommandStatus Select(const AnalogOutputDouble64&, uint16_t) override { return CommandStatus::SUCCESS; }
+    CommandStatus Operate(const AnalogOutputDouble64& c, uint16_t i, IUpdateHandler& h, OperateType) override { return ao(c.value, i, h); }
+
+private:
+    CommandStatus ao(double value, uint16_t index, IUpdateHandler& h)
+    {
+        h.Update(AnalogOutputStatus(value, Flags(0x01)), index);
+        std::cerr << "outstation_sim: analog operate idx=" << index << " val=" << value << std::endl;
+        return CommandStatus::SUCCESS;
+    }
+};
 
 int main(int argc, char* argv[])
 {
@@ -61,7 +105,7 @@ int main(int argc, char* argv[])
     config.link.KeepAliveTimeout = TimeDuration::Max();
 
     auto app = DefaultOutstationApplication::Create();
-    auto outstation = channel->AddOutstation("sim-ostn", SuccessCommandHandler::Create(), app, config);
+    auto outstation = channel->AddOutstation("sim-ostn", std::make_shared<ReflectingCommandHandler>(), app, config);
 
     // Seed initial static values so an integrity poll returns meaningful data.
     {

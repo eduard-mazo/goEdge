@@ -342,33 +342,54 @@ func (p *Publisher) OnControlAnalog(index uint16, value float64, isSelect bool) 
 	return dnp3.CtrlAccepted
 }
 
+// writeControlBinary writes a binary control to the mapped field point on any of
+// the three field protocols: a Modbus/TCP or RTU coil, or a DNP3 CROB on a field
+// outstation the gateway polls as a master.
 func (p *Publisher) writeControlBinary(m config.ControlMapping, on bool) error {
 	switch m.Protocol {
 	case "modbus", "":
 		return p.modbus.WriteCoil(m.SourceID, m.Address, on)
+	case "modbusrtu":
+		return p.modbusRTU.WriteCoil(m.SourceID, m.Address, on)
+	case "dnp3":
+		return p.master.OperateBinary(m.SourceID, m.Address, on)
 	default:
-		return fmt.Errorf("control protocol %q not supported (only modbus)", m.Protocol)
+		return fmt.Errorf("control protocol %q not supported", m.Protocol)
 	}
 }
 
+// writeControlAnalog writes an analog control: a Modbus/TCP or RTU holding
+// register (engineering → raw uint16) or a DNP3 analog output (float) on a field
+// outstation. The mapping transform converts the engineering value to the
+// field-native value (raw = (value - offset) / scale).
 func (p *Publisher) writeControlAnalog(m config.ControlMapping, value float64) error {
 	scale := m.Scale
 	if scale == 0 {
 		scale = 1
 	}
-	raw := math.Round((value - m.Offset) / scale)
-	switch {
-	case raw < 0:
-		raw = 0
-	case raw > 65535:
-		raw = 65535
-	}
+	field := (value - m.Offset) / scale
 	switch m.Protocol {
 	case "modbus", "":
-		return p.modbus.WriteRegister(m.SourceID, m.Address, uint16(raw))
+		return p.modbus.WriteRegister(m.SourceID, m.Address, clampReg(field))
+	case "modbusrtu":
+		return p.modbusRTU.WriteRegister(m.SourceID, m.Address, clampReg(field))
+	case "dnp3":
+		return p.master.OperateAnalog(m.SourceID, m.Address, field)
 	default:
-		return fmt.Errorf("control protocol %q not supported (only modbus)", m.Protocol)
+		return fmt.Errorf("control protocol %q not supported", m.Protocol)
 	}
+}
+
+// clampReg rounds and clamps a field value to the uint16 a Modbus register holds.
+func clampReg(v float64) uint16 {
+	v = math.Round(v)
+	switch {
+	case v < 0:
+		return 0
+	case v > 65535:
+		return 65535
+	}
+	return uint16(v)
 }
 
 // serveOutstation pushes one mapped point onto the DNP3 outstation database so a

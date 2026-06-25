@@ -55,6 +55,10 @@ type bus struct {
 	handler *mb.RTUClientHandler
 	client  mb.Client
 	open    bool // port currently open
+
+	// busMu serializes transactions on the half-duplex bus: the sweep's reads and
+	// control writes from other goroutines — only one transaction may be in flight.
+	busMu sync.Mutex
 }
 
 // Poller is the Modbus RTU source.Source. Construct with New, register slaves
@@ -236,6 +240,8 @@ func (p *Poller) pollBus(ctx context.Context, b *bus) {
 // slave tried in this sweep fails, the port is dropped so the next sweep reopens
 // it — recovering from a yanked/re-enumerated USB adapter.
 func (p *Poller) sweep(ctx context.Context, b *bus) {
+	b.busMu.Lock()
+	defer b.busMu.Unlock()
 	if !p.ensureOpen(ctx, b) {
 		return
 	}
@@ -356,6 +362,58 @@ func (p *Poller) read(ctx context.Context, b *bus, d *rtuDevice, pt modbus.Point
 		}
 	}
 	return nil, lastErr
+}
+
+// deviceBus finds the bus and slave for a device ID.
+func (p *Poller) deviceBus(id string) (*bus, *rtuDevice, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, b := range p.buses {
+		for _, d := range b.devices {
+			if d.cfg.ID == id {
+				return b, d, nil
+			}
+		}
+	}
+	return nil, nil, fmt.Errorf("modbusrtu: unknown device %q", id)
+}
+
+// WriteCoil writes a single coil to a serial slave (binary control), serialized
+// on its half-duplex bus. on → 0xFF00, off → 0x0000.
+func (p *Poller) WriteCoil(deviceID string, addr uint16, on bool) error {
+	b, d, err := p.deviceBus(deviceID)
+	if err != nil {
+		return err
+	}
+	b.busMu.Lock()
+	defer b.busMu.Unlock()
+	if !b.open || b.client == nil {
+		return fmt.Errorf("modbusrtu device %q: bus not open", deviceID)
+	}
+	b.handler.SetSlave(d.cfg.UnitID)
+	var v uint16
+	if on {
+		v = 0xFF00
+	}
+	_, err = b.client.WriteSingleCoil(context.Background(), addr, v)
+	return err
+}
+
+// WriteRegister writes a single holding register to a serial slave (analog
+// control), serialized on its half-duplex bus.
+func (p *Poller) WriteRegister(deviceID string, addr uint16, value uint16) error {
+	b, d, err := p.deviceBus(deviceID)
+	if err != nil {
+		return err
+	}
+	b.busMu.Lock()
+	defer b.busMu.Unlock()
+	if !b.open || b.client == nil {
+		return fmt.Errorf("modbusrtu device %q: bus not open", deviceID)
+	}
+	b.handler.SetSlave(d.cfg.UnitID)
+	_, err = b.client.WriteSingleRegister(context.Background(), addr, value)
+	return err
 }
 
 func (p *Poller) setConn(d *rtuDevice, connected bool, errMsg string) {

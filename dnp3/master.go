@@ -41,6 +41,12 @@ type Master interface {
 
 	// IntegrityPoll triggers an on-demand integrity poll for one outstation.
 	IntegrityPoll(outstationID string) error
+
+	// OperateBinary / OperateAnalog issue a DirectOperate control to a field
+	// outstation (Phase 8 control passthrough, DNP3 target). index is the point
+	// index on that outstation.
+	OperateBinary(outstationID string, index uint16, on bool) error
+	OperateAnalog(outstationID string, index uint16, value float64) error
 }
 
 // Master is a source.Source plus DNP3-specific outstation management.
@@ -61,3 +67,9 @@ func (m *masterAdapter) Start(ctx context.Context) error  { return m.lib.Start(c
 func (m *masterAdapter) Stop()                            { m.lib.Stop() }
 func (m *masterAdapter) Status() []source.Status          { return toStatuses(m.lib.Status()) }
 func (m *masterAdapter) IntegrityPoll(id string) error    { return m.lib.IntegrityPoll(id) }
+func (m *masterAdapter) OperateBinary(id string, index uint16, on bool) error {
+	return m.lib.OperateBinary(id, index, on)
+}
+func (m *masterAdapter) OperateAnalog(id string, index uint16, value float64) error {
+	return m.lib.OperateAnalog(id, index, value)
+}
