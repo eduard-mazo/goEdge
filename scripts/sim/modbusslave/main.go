@@ -8,9 +8,15 @@
 //
 //	holding  0-1 float32 tank level (m, ABCD)   2 uint16 pump speed (rpm)
 //	         3   int16   temp ×10 (°C)         4-5 float32 flow (m³/h, ABCD)
+//	         10  uint16  setpoint scratch (write-back target, not mutated)
 //	input    0   uint16  pressure (kPa)
 //	coils    0   pump running    1 valve open
+//	         5   command scratch (write-back target, not mutated)
 //	discrete 0   fault
+//
+// It also accepts write FC 0x05 (WriteSingleCoil) and 0x06 (WriteSingleRegister)
+// so the control-passthrough soak can write a value and read it back. tick()
+// leaves holding[10] and coils[5] alone, so a written value persists.
 //
 // Usage:  go run ./scripts/sim/modbusslave [port]   (default 1502)
 package main
@@ -43,14 +49,14 @@ func (b *banks) putF32(bank *[256]uint16, addr int, v float32) {
 func (b *banks) tick(n int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.putF32(&b.holding, 0, 10.0+float32(n%50)*0.2)  // tank level 10..20 m sawtooth
-	b.holding[2] = uint16(1450 + n%20)               // pump speed rpm
-	b.holding[3] = uint16(int16(235 + (n%11 - 5)))   // temp ×10 → 23.0..24.0 °C
-	b.putF32(&b.holding, 4, 3.0+float32(n%30)*0.1)   // flow m³/h
-	b.input[0] = uint16(101 + n%8)                   // pressure kPa
-	b.coils[0] = n%2 == 0                            // pump running
-	b.coils[1] = (n/3)%2 == 0                        // valve open
-	b.discrete[0] = n%17 == 0                        // fault (occasional)
+	b.putF32(&b.holding, 0, 10.0+float32(n%50)*0.2) // tank level 10..20 m sawtooth
+	b.holding[2] = uint16(1450 + n%20)              // pump speed rpm
+	b.holding[3] = uint16(int16(235 + (n%11 - 5)))  // temp ×10 → 23.0..24.0 °C
+	b.putF32(&b.holding, 4, 3.0+float32(n%30)*0.1)  // flow m³/h
+	b.input[0] = uint16(101 + n%8)                  // pressure kPa
+	b.coils[0] = n%2 == 0                           // pump running
+	b.coils[1] = (n/3)%2 == 0                       // valve open
+	b.discrete[0] = n%17 == 0                       // fault (occasional)
 }
 
 func main() {
@@ -112,7 +118,8 @@ func (b *banks) handle(c net.Conn) {
 	}
 }
 
-// respond builds the response PDU for a request PDU (read function codes only).
+// respond builds the response PDU for a request PDU: reads (FC 1-4) and single
+// writes (FC 5-6).
 func (b *banks) respond(pdu []byte) []byte {
 	if len(pdu) < 5 {
 		return []byte{pdu[0] | 0x80, 0x03} // illegal data value
@@ -156,6 +163,20 @@ func (b *banks) respond(pdu []byte) []byte {
 			}
 		}
 		return resp
+	case 0x05: // write single coil — value 0xFF00 = on, 0x0000 = off
+		val := binary.BigEndian.Uint16(pdu[3:5])
+		if int(addr) >= len(b.coils) || (val != 0x0000 && val != 0xFF00) {
+			return []byte{fc | 0x80, 0x03} // illegal data value
+		}
+		b.coils[addr] = val == 0xFF00
+		return append([]byte{fc}, pdu[1:5]...) // echo addr+value
+	case 0x06: // write single holding register
+		val := binary.BigEndian.Uint16(pdu[3:5])
+		if int(addr) >= len(b.holding) {
+			return []byte{fc | 0x80, 0x02} // illegal data address
+		}
+		b.holding[addr] = val
+		return append([]byte{fc}, pdu[1:5]...) // echo addr+value
 	default:
 		return []byte{fc | 0x80, 0x01} // illegal function
 	}
